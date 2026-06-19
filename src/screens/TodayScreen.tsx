@@ -16,12 +16,11 @@ import {
   UIManager,
   View
 } from "react-native";
-import { Camera, Mic, Plus, ScanBarcode } from "lucide-react-native";
+import { Camera, Flame, Mic, Plus, ScanBarcode, Settings } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { InteractivePressable } from "../components/InteractivePressable";
 import { ModalShell } from "../components/ModalShell";
-import { MacroFooter } from "../components/NutritionBits";
 import { targetsFromCalories, totalsForDay } from "../domain/nutrition";
 import { createId } from "../domain/seed";
 import { FoodDraft, FoodEntry, MacroTotals } from "../domain/types";
@@ -30,7 +29,7 @@ import { getLocationContext } from "../services/location";
 import { estimateMealText } from "../services/openRouter";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
-import { addDays, labelForDay, toDateKey } from "../utils/date";
+import { labelForDay } from "../utils/date";
 
 export type CaptureMode = "type" | "barcode" | "photo" | "label" | "mic";
 export type AppModal = "stats" | "settings" | "saved" | "capture" | null;
@@ -182,17 +181,6 @@ function numeric(value: string, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function currentStreakCount(entries: FoodEntry[]) {
-  const activeDays = new Set(entries.map((entry) => entry.day));
-  let day = toDateKey(new Date());
-  let count = 0;
-  while (activeDays.has(day)) {
-    count += 1;
-    day = addDays(day, -1);
-  }
-  return count;
-}
-
 function PhaseIndicator({ phase }: { phase: LinePhase }) {
   const [dotCount, setDotCount] = useState(1);
   const opacity = useRef(new Animated.Value(0.65)).current;
@@ -328,6 +316,7 @@ export function TodayScreen({
   const [notice, setNotice] = useState("");
   const [listening, setListening] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const inputRef = useRef<TextInput>(null);
   const lastPrefillRef = useRef("");
@@ -351,10 +340,11 @@ export function TodayScreen({
   const note = data?.dayNotes.find((item) => item.day === selectedDay)?.text ?? "";
   const entries = useMemo(() => data?.entries.filter((entry) => entry.day === selectedDay) ?? [], [data?.entries, selectedDay]);
   const totals = useMemo(() => (data ? totalsForDay(data.entries, selectedDay) : { calories: 0, carbs: 0, protein: 0, fat: 0 }), [data, selectedDay]);
-  const streakCount = useMemo(() => currentStreakCount(data?.entries ?? []), [data?.entries]);
+  const loggedDayCount = useMemo(() => new Set((data?.entries ?? []).map((entry) => entry.day)).size, [data?.entries]);
   const lineRows = useMemo(() => buildLineRows(workingText, entries, lineStatuses), [entries, lineStatuses, workingText]);
   const editingEntry = useMemo(() => entries.find((entry) => entry.id === editingEntryId), [editingEntryId, entries]);
-  const showDock = inputFocused || listening;
+  const dockBottom = keyboardOpen ? 10 : Math.max(insets.bottom + 10, 18);
+  const dockReserve = dockBottom + 78;
 
   useEffect(() => {
     workingTextRef.current = workingText;
@@ -444,7 +434,7 @@ export function TodayScreen({
       setLinePhase(row.key, runId, "done", { entryId: entry.id, message: result.error ?? result.notice });
       updateDayNote(day, workingTextRef.current.trimEnd());
       externalNoteRef.current = workingTextRef.current.trimEnd();
-      const nextNotice = locationContext.error ?? (result.error ? result.error : result.notice ?? "");
+      const nextNotice = locationContext.error ?? result.error ?? "";
       setNotice(/add an openrouter key/i.test(nextNotice) ? "" : nextNotice);
       void feedback("log");
     },
@@ -511,6 +501,15 @@ export function TodayScreen({
       } catch {
         // Ignore cleanup races with native recognition teardown.
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    const show = Keyboard.addListener("keyboardDidShow", () => setKeyboardOpen(true));
+    const hide = Keyboard.addListener("keyboardDidHide", () => setKeyboardOpen(false));
+    return () => {
+      show.remove();
+      hide.remove();
     };
   }, []);
 
@@ -706,7 +705,7 @@ export function TodayScreen({
   return (
     <KeyboardAvoidingView
 	      behavior={Platform.OS === "ios" ? "padding" : "height"}
-	      style={[styles.screen, { paddingTop: Math.max(insets.top + 12, Platform.OS === "android" ? 42 : 26) }]}
+	      style={[styles.screen, { paddingTop: Math.max(insets.top + 10, 24) }]}
       onTouchStart={rememberTouchStart}
       onTouchEnd={finishTouchSwipe}
       {...panResponder.panHandlers}
@@ -718,15 +717,16 @@ export function TodayScreen({
 	        </InteractivePressable>
 	        <View style={styles.topActions}>
 	          <InteractivePressable onPress={() => openModal("stats")} style={styles.streakPill}>
-	            <Text style={styles.streakText}>🔥 {streakCount}</Text>
+	            <Flame size={20} color={colors.orange} fill={colors.orange} strokeWidth={2.2} />
+	            <Text style={styles.streakText}>{loggedDayCount}</Text>
 	          </InteractivePressable>
 	          <InteractivePressable onPress={() => openModal("settings")} style={styles.settingsPill}>
-	            <Text style={styles.settingsText}>⚙</Text>
+	            <Settings size={22} color={colors.ink} strokeWidth={2.5} />
 	          </InteractivePressable>
 	        </View>
 	      </View>
 
-      <View style={[styles.body, showDock && styles.bodyDocked]}>
+      <View style={[styles.body, { paddingBottom: dockReserve }]}>
         <View style={styles.logArea}>
           <TextInput
             ref={inputRef}
@@ -774,7 +774,7 @@ export function TodayScreen({
 
         <ScrollView
           style={styles.results}
-          contentContainerStyle={[styles.resultsContent, { paddingBottom: showDock ? 128 : 18 }]}
+          contentContainerStyle={styles.resultsContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
 	        >
@@ -782,10 +782,10 @@ export function TodayScreen({
 	        </ScrollView>
 	      </View>
 
-	      {showDock ? (
-	        <View style={styles.dock}>
+	        <View style={[styles.dock, { bottom: dockBottom }]}>
 	          <View style={styles.caloriePill}>
-	            <Text style={styles.caloriePillText}>🔥 {totals.calories.toLocaleString()}</Text>
+	            <Flame size={20} color={colors.orange} fill={colors.orange} strokeWidth={2.2} />
+	            <Text style={styles.caloriePillText}>{totals.calories.toLocaleString()}</Text>
 	          </View>
           <InteractivePressable onPress={toggleDictation} style={[styles.roundButton, listening && styles.roundButtonOn]}>
             <Mic size={24} color={listening ? colors.ink : colors.blue} strokeWidth={2.6} />
@@ -800,11 +800,6 @@ export function TodayScreen({
 	            <ScanBarcode size={24} color={colors.ink} strokeWidth={2.4} />
 	          </InteractivePressable>
         </View>
-	      ) : (
-	        <View style={styles.footerWrap}>
-	          <MacroFooter totals={totals} />
-	        </View>
-	      )}
 
       <FoodEditModal entry={editingEntry} onClose={() => setEditingEntryId(null)} onSave={saveEntry} onDelete={removeEntry} />
     </KeyboardAvoidingView>
@@ -815,7 +810,8 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.bg,
-    paddingHorizontal: 22,
+    position: "relative",
+    paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 0
   },
@@ -835,7 +831,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 0,
     flexDirection: "row",
-    alignItems: "center"
+    alignItems: "center",
+    gap: 8
   },
   todayPill: {
     minWidth: 116,
@@ -856,28 +853,26 @@ const styles = StyleSheet.create({
   },
   streakPill: {
     height: 48,
-    borderTopLeftRadius: 999,
-    borderBottomLeftRadius: 999,
+    minWidth: 70,
+    borderRadius: 999,
+    flexDirection: "row",
+    gap: 5,
     paddingLeft: 16,
-    paddingRight: 8,
+    paddingRight: 14,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.panel,
     borderWidth: 1,
-    borderRightWidth: 0,
     borderColor: colors.line
   },
   settingsPill: {
     height: 48,
     width: 48,
-    marginLeft: -10,
-    borderTopRightRadius: 999,
-    borderBottomRightRadius: 999,
+    borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.panel,
     borderWidth: 1,
-    borderLeftWidth: 0,
     borderColor: colors.line
   },
   streakText: {
@@ -885,17 +880,9 @@ const styles = StyleSheet.create({
     fontSize: 19,
     fontWeight: "900"
   },
-  settingsText: {
-    color: colors.ink,
-    fontSize: 22,
-    fontWeight: "900"
-  },
   body: {
     flex: 1,
     paddingTop: 50
-  },
-  bodyDocked: {
-    paddingBottom: 66
   },
   logArea: {
     minHeight: 128,
@@ -958,7 +945,7 @@ const styles = StyleSheet.create({
   },
   resultsContent: {
     flexGrow: 1,
-    justifyContent: "flex-end",
+    justifyContent: "flex-start",
     gap: 12
   },
   notice: {
@@ -967,17 +954,21 @@ const styles = StyleSheet.create({
     fontWeight: "800"
   },
   dock: {
+    position: "absolute",
+    left: 18,
+    right: 18,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 8,
-    paddingBottom: 0
+    gap: 7
   },
   caloriePill: {
     flex: 1,
-    minWidth: 136,
-    height: 54,
+    minWidth: 92,
+    height: 52,
     borderRadius: 999,
+    flexDirection: "row",
+    gap: 6,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.panel,
@@ -986,12 +977,12 @@ const styles = StyleSheet.create({
   },
   caloriePillText: {
     color: colors.ink,
-    fontSize: 20,
+    fontSize: 19,
     fontWeight: "900"
   },
   roundButton: {
-    width: 52,
-    height: 52,
+    width: 48,
+    height: 48,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
@@ -1001,9 +992,6 @@ const styles = StyleSheet.create({
   },
   roundButtonOn: {
     backgroundColor: colors.purple
-  },
-  footerWrap: {
-    paddingBottom: 0
   },
   editStack: {
     gap: 14

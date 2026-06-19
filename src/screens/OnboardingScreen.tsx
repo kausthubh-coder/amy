@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import React, { useEffect, useState } from "react";
+import { Image, Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { integrationConfig } from "../config/integrations";
 import { targetsFromCalories } from "../domain/nutrition";
@@ -15,6 +15,7 @@ export function OnboardingScreen() {
   const [openRouterKey, setOpenRouterKey] = useState(data?.settings.openRouterKey ?? "");
   const [openRouterModel, setOpenRouterModel] = useState(data?.settings.openRouterModel ?? integrationConfig.openRouter.defaultModel);
   const [step, setStep] = useState<"targets" | "ai">("targets");
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
 
   const numericCalories = Number(calories) || 2632;
   const macros = targetsFromCalories(numericCalories);
@@ -30,18 +31,28 @@ export function OnboardingScreen() {
     });
   };
 
+  useEffect(() => {
+    const show = Keyboard.addListener("keyboardDidShow", () => setKeyboardOpen(true));
+    const hide = Keyboard.addListener("keyboardDidHide", () => setKeyboardOpen(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.screen}>
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.screen}>
       <ScrollView
+        keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, keyboardOpen && styles.contentKeyboard]}
       >
-        <View style={styles.logoRow}>
-          <Image source={require("../../assets/icon-cat-alt.png")} style={styles.logo} />
+        <View style={[styles.logoRow, keyboardOpen && styles.logoRowKeyboard]}>
+          <Image source={require("../../assets/icon-cat-alt.png")} style={[styles.logo, keyboardOpen && styles.logoKeyboard]} />
         </View>
-        <Text style={styles.title}>{step === "targets" ? "Set your target" : "Connect OpenRouter"}</Text>
-        <Text style={styles.copy}>
+        <Text style={[styles.title, keyboardOpen && styles.titleKeyboard]}>{step === "targets" ? "Set your target" : "Connect OpenRouter"}</Text>
+        <Text style={[styles.copy, keyboardOpen && styles.copyKeyboard]}>
           {step === "targets"
             ? "Choose the daily calories and weight goal Amy should use."
             : "Add an optional key for better AI estimates from text, labels, and meal photos."}
@@ -51,7 +62,7 @@ export function OnboardingScreen() {
           <>
             <View style={styles.card}>
               <Text style={styles.label}>Daily calorie target</Text>
-              <TextInput keyboardType="number-pad" value={calories} onChangeText={setCalories} style={styles.bigInput} />
+              <TextInput keyboardType="number-pad" returnKeyType="done" value={calories} onChangeText={setCalories} style={styles.bigInput} />
               <View style={styles.macroLine}>
                 <Text style={[styles.macro, { color: colors.pink }]}>C {macros.carbsTarget}g</Text>
                 <Text style={[styles.macro, { color: colors.yellow }]}>P {macros.proteinTarget}g</Text>
@@ -62,11 +73,11 @@ export function OnboardingScreen() {
             <View style={styles.row}>
               <View style={styles.smallCard}>
                 <Text style={styles.label}>Current weight</Text>
-                <TextInput keyboardType="number-pad" value={currentWeight} onChangeText={setCurrentWeight} style={styles.smallInput} />
+                <TextInput keyboardType="number-pad" returnKeyType="done" value={currentWeight} onChangeText={setCurrentWeight} style={styles.smallInput} />
               </View>
               <View style={styles.smallCard}>
                 <Text style={styles.label}>Goal weight</Text>
-                <TextInput keyboardType="number-pad" value={goalWeight} onChangeText={setGoalWeight} style={styles.smallInput} />
+                <TextInput keyboardType="number-pad" returnKeyType="done" value={goalWeight} onChangeText={setGoalWeight} style={styles.smallInput} />
               </View>
             </View>
 
@@ -85,6 +96,7 @@ export function OnboardingScreen() {
               autoCorrect={false}
               placeholder="sk-or-... optional"
               placeholderTextColor={colors.dim}
+              returnKeyType="next"
               style={styles.textInput}
             />
             <TextInput
@@ -94,6 +106,7 @@ export function OnboardingScreen() {
               autoCorrect={false}
               placeholder={integrationConfig.openRouter.defaultModel}
               placeholderTextColor={colors.dim}
+              returnKeyType="done"
               style={styles.textInput}
             />
             <Text style={styles.hint}>Stored only on this device. Exports and repository files do not include your key.</Text>
@@ -123,14 +136,27 @@ const styles = StyleSheet.create({
     padding: 28,
     paddingVertical: 34
   },
+  contentKeyboard: {
+    justifyContent: "flex-start",
+    paddingTop: 24,
+    paddingBottom: 180
+  },
   logoRow: {
     alignItems: "center",
     marginBottom: 24
+  },
+  logoRowKeyboard: {
+    marginBottom: 14
   },
   logo: {
     width: 112,
     height: 112,
     borderRadius: 28
+  },
+  logoKeyboard: {
+    width: 72,
+    height: 72,
+    borderRadius: 20
   },
   title: {
     color: colors.ink,
@@ -139,12 +165,21 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0
   },
+  titleKeyboard: {
+    fontSize: 34,
+    lineHeight: 38
+  },
   copy: {
     marginTop: 14,
     color: colors.muted,
     fontSize: 18,
     lineHeight: 26,
     fontWeight: "700"
+  },
+  copyKeyboard: {
+    marginTop: 8,
+    fontSize: 16,
+    lineHeight: 22
   },
   card: {
     marginTop: 28,
@@ -220,10 +255,12 @@ const styles = StyleSheet.create({
   ctaRow: {
     marginTop: 16,
     flexDirection: "row",
-    gap: 12
+    gap: 12,
+    alignItems: "stretch"
   },
   ctaSmall: {
     flex: 1,
+    minWidth: 0,
     height: 58,
     borderRadius: 999,
     alignItems: "center",

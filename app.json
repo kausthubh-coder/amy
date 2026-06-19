@@ -3,7 +3,7 @@
     "name": "Amy",
     "slug": "amy-calorie-tracker",
     "scheme": "amy",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon-cat-alt.png",
     "userInterfaceStyle": "automatic",
@@ -17,7 +17,7 @@
     },
     "android": {
       "package": "com.kaust.amy",
-      "versionCode": 2,
+      "versionCode": 4,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "CAMERA",

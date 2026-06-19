@@ -1,8 +1,8 @@
 import { BarcodeScanningResult, CameraView, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, View } from "react-native";
-import { Camera, Circle, Flashlight, Image as ImageIcon, Keyboard, Mic, ScanBarcode, Tags } from "lucide-react-native";
+import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { Camera, Circle, Flashlight, Image as ImageIcon, Keyboard, Mic, ScanBarcode } from "lucide-react-native";
 
 import { InteractivePressable } from "../components/InteractivePressable";
 import { lookupOpenFoodFactsProduct } from "../services/openFoodFacts";
@@ -25,41 +25,47 @@ export function CaptureModal({
   const { data, selectedDay, addEntryFromDraft, appendDayNoteLine } = useAppData();
   const [permission, requestPermission] = useCameraPermissions();
   const [busy, setBusy] = useState(false);
-  const [manualBarcode, setManualBarcode] = useState("");
   const [caption, setCaption] = useState("");
   const [notice, setNotice] = useState("");
   const [torchOn, setTorchOn] = useState(false);
   const cameraRef = useRef<CameraView | null>(null);
   const lastPrefillLookupRef = useRef("");
+  const barcodeLookupInFlightRef = useRef(false);
+  const { height } = useWindowDimensions();
 
   const needsCamera = mode === "barcode" || mode === "photo" || mode === "label";
   const canUseCamera = Platform.OS !== "web" && needsCamera;
+  const cameraHeight = Math.round(Math.max(mode === "barcode" ? 356 : 386, Math.min(mode === "barcode" ? 430 : 460, height * 0.54)));
 
   const lookupBarcode = async (code: string) => {
-    if (busy) return;
+    if (barcodeLookupInFlightRef.current) return;
     const cleanCode = code.replace(/\D/g, "");
     if (!cleanCode) {
-      setNotice("Enter a barcode first.");
+      setNotice("Aim the camera at a package barcode.");
       return;
     }
+    barcodeLookupInFlightRef.current = true;
     setBusy(true);
-    const result = await lookupOpenFoodFactsProduct(cleanCode, selectedDay);
-    if (result.status === "found") {
-      addEntryFromDraft(result.draft, result.draft.title);
-      appendDayNoteLine(selectedDay, result.draft.title);
-      setNotice("Open Food Facts logged.");
-      onDone();
-    } else {
-      setNotice(result.detail ? `${result.message}\n${result.detail}` : result.message);
+    try {
+      const result = await lookupOpenFoodFactsProduct(cleanCode, selectedDay);
+      if (result.status === "found") {
+        addEntryFromDraft(result.draft, result.draft.title);
+        appendDayNoteLine(selectedDay, result.draft.title);
+        setNotice("Open Food Facts logged.");
+        onDone();
+      } else {
+        setNotice(result.detail ? `${result.message}\n${result.detail}` : result.message);
+      }
+    } finally {
+      barcodeLookupInFlightRef.current = false;
+      setBusy(false);
     }
-    setBusy(false);
   };
 
   useEffect(() => {
     const cleanCode = prefillBarcode?.replace(/\D/g, "") ?? "";
     if (mode !== "barcode" || !cleanCode || lastPrefillLookupRef.current === cleanCode) return;
     lastPrefillLookupRef.current = cleanCode;
-    setManualBarcode(cleanCode);
     void lookupBarcode(cleanCode);
   }, [mode, prefillBarcode]);
 
@@ -166,17 +172,9 @@ export function CaptureModal({
 
   return (
     <View style={styles.stack}>
-      <View style={styles.modeHeader}>
-        <View style={styles.modeIcon}>
-          {mode === "barcode" ? <ScanBarcode size={28} color={colors.orange} /> : mode === "label" ? <Tags size={28} color={colors.pink} /> : <Camera size={28} color="#F141FF" />}
-        </View>
-        <View style={styles.modeText}>
-          <Text style={styles.hero}>{mode === "barcode" ? "Scan barcode" : mode === "label" ? "Capture label" : "Capture meal"}</Text>
-          <Text style={styles.copy}>
-            {mode === "barcode" ? "Point at the code or type the number below." : "Use a photo plus a note for better Gemini 3.5 estimates."}
-          </Text>
-        </View>
-      </View>
+      <Text style={styles.copy}>
+        {mode === "barcode" ? "Point at the code and hold steady inside the frame." : "Use a photo plus a note for better Gemini 3.5 estimates."}
+      </Text>
 
       {canUseCamera ? (
         !permission?.granted ? (
@@ -185,10 +183,10 @@ export function CaptureModal({
             <Text style={styles.primaryText}>Allow camera</Text>
           </InteractivePressable>
         ) : (
-          <View style={styles.cameraCard}>
+          <View style={[styles.cameraCard, { minHeight: cameraHeight }]}>
             <CameraView
               ref={cameraRef}
-              style={styles.camera}
+              style={[styles.camera, { height: cameraHeight }]}
               facing="back"
               enableTorch={torchOn}
               barcodeScannerSettings={mode === "barcode" ? { barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "code128"] } : undefined}
@@ -225,27 +223,10 @@ export function CaptureModal({
           </View>
         )
       ) : (
-        <Text style={styles.notice}>Camera preview is Android-first. Use manual barcode or typing in web preview.</Text>
+        <Text style={styles.notice}>Camera preview is Android-first. Use your phone camera to scan packages.</Text>
       )}
 
-      {mode === "barcode" ? (
-        <View style={styles.manualCard}>
-          <TextInput
-            value={manualBarcode}
-            onChangeText={(value) => setManualBarcode(value.replace(/\D/g, ""))}
-            keyboardType="number-pad"
-            inputMode="numeric"
-            returnKeyType="search"
-            onSubmitEditing={() => lookupBarcode(manualBarcode)}
-            placeholder="Type barcode number"
-            placeholderTextColor={colors.dim}
-            style={styles.input}
-          />
-          <InteractivePressable onPress={() => lookupBarcode(manualBarcode)} style={styles.secondaryButton}>
-            <Text style={styles.secondaryText}>{busy ? "Checking..." : "Check Open Food Facts"}</Text>
-          </InteractivePressable>
-        </View>
-      ) : (
+      {mode !== "barcode" ? (
         <TextInput
           value={caption}
           onChangeText={setCaption}
@@ -253,7 +234,7 @@ export function CaptureModal({
           placeholderTextColor={colors.dim}
           style={styles.input}
         />
-      )}
+      ) : null}
 
       {busy ? <ActivityIndicator color={colors.purple} /> : null}
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
@@ -265,25 +246,6 @@ const styles = StyleSheet.create({
   stack: {
     gap: 16
   },
-  modeHeader: {
-    flexDirection: "row",
-    gap: 12,
-    alignItems: "center",
-    paddingHorizontal: 2
-  },
-  modeIcon: {
-    width: 54,
-    height: 54,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.panel,
-    borderWidth: 1,
-    borderColor: colors.line
-  },
-  modeText: {
-    flex: 1
-  },
   hero: {
     color: colors.ink,
     fontSize: 25,
@@ -293,15 +255,8 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 15,
     lineHeight: 22,
-    fontWeight: "700"
-  },
-  manualCard: {
-    gap: 10,
-    padding: 14,
-    borderRadius: 22,
-    backgroundColor: colors.panel,
-    borderWidth: 1,
-    borderColor: colors.line
+    fontWeight: "800",
+    paddingHorizontal: 2
   },
   input: {
     minHeight: 56,
@@ -326,22 +281,8 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "900"
   },
-  secondaryButton: {
-    minHeight: 54,
-    borderRadius: 999,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.panel2,
-    paddingHorizontal: 18
-  },
-  secondaryText: {
-    color: colors.ink,
-    fontSize: 16,
-    fontWeight: "900"
-  },
   cameraCard: {
     overflow: "hidden",
-    minHeight: 420,
     borderRadius: 26,
     backgroundColor: colors.panel,
     borderWidth: 1,
@@ -349,7 +290,7 @@ const styles = StyleSheet.create({
     position: "relative"
   },
   camera: {
-    height: 420
+    minHeight: 356
   },
   cameraScrim: {
     ...StyleSheet.absoluteFill,

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Linking, StatusBar, StyleSheet, Text, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { Camera, ScanBarcode, Tags } from "lucide-react-native";
 
 import { ModalShell } from "./src/components/ModalShell";
 import { LocalDataProvider, useAppData } from "./src/store/AppDataContext";
@@ -52,6 +53,15 @@ function AppBody() {
   const [dictationSignal, setDictationSignal] = useState(0);
   const [prefillText, setPrefillText] = useState("");
   const [prefillBarcode, setPrefillBarcode] = useState("");
+  const captureTitle = captureMode === "barcode" ? "Scan barcode" : captureMode === "label" ? "Capture label" : "Capture meal";
+  const captureTitleIcon =
+    captureMode === "barcode" ? (
+      <ScanBarcode size={28} color={colors.orange} strokeWidth={2.5} />
+    ) : captureMode === "label" ? (
+      <Tags size={28} color={colors.pink} strokeWidth={2.5} />
+    ) : (
+      <Camera size={28} color="#F141FF" strokeWidth={2.5} />
+    );
 
   const focusTypeInput = useCallback((text?: string) => {
     setPrefillText(text ?? "");
@@ -108,7 +118,7 @@ function AppBody() {
       <ModalShell visible={activeModal === "settings"} title="Settings" onClose={() => setActiveModal(null)}>
         <SettingsModal />
       </ModalShell>
-      <ModalShell visible={activeModal === "capture"} onClose={() => setActiveModal(null)}>
+      <ModalShell visible={activeModal === "capture"} title={captureTitle} titleIcon={captureTitleIcon} onClose={() => setActiveModal(null)}>
         <CaptureModal mode={captureMode} onDone={() => setActiveModal(null)} focusTypeInput={() => focusTypeInput()} prefillBarcode={prefillBarcode} />
       </ModalShell>
     </View>

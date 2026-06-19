@@ -10,6 +10,8 @@ type Props = Omit<PressableProps, "style" | "children"> & {
   sound?: boolean;
 };
 
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
 export function InteractivePressable({ children, style, onPress, feedbackKind = "tap", sound = true, disabled, ...props }: Props) {
   const scale = useRef(new Animated.Value(1)).current;
   const useNativeDriver = Platform.OS !== "web";
@@ -27,8 +29,15 @@ export function InteractivePressable({ children, style, onPress, feedbackKind = 
   };
 
   return (
-    <Pressable {...props} disabled={disabled} onPress={handlePress} onPressIn={pressIn} onPressOut={pressOut}>
-      <Animated.View style={[style, disabled && { opacity: 0.45 }, { transform: [{ scale }] }]}>{children}</Animated.View>
-    </Pressable>
+    <AnimatedPressable
+      {...props}
+      disabled={disabled}
+      onPress={handlePress}
+      onPressIn={pressIn}
+      onPressOut={pressOut}
+      style={[style, disabled && { opacity: 0.45 }, { transform: [{ scale }] }]}
+    >
+      {children}
+    </AnimatedPressable>
   );
 }
