@@ -1,7 +1,7 @@
 import { Platform } from "react-native";
 import * as Haptics from "expo-haptics";
 
-type FeedbackKind = "tap" | "success" | "warning" | "error";
+export type FeedbackKind = "tap" | "success" | "warning" | "error" | "swipe" | "log" | "edit" | "delete" | "keyboard";
 
 async function playTapSound() {
   if (Platform.OS === "web") {
@@ -25,18 +25,30 @@ export async function feedback(kind: FeedbackKind = "tap") {
   try {
     if (Platform.OS === "android") {
       const androidKind =
-        kind === "success"
+        kind === "success" || kind === "log"
           ? Haptics.AndroidHaptics.Confirm
-          : kind === "error" || kind === "warning"
+          : kind === "error" || kind === "warning" || kind === "delete"
             ? Haptics.AndroidHaptics.Reject
+            : kind === "swipe"
+              ? Haptics.AndroidHaptics.Gesture_End
+              : kind === "edit"
+                ? Haptics.AndroidHaptics.Toggle_On
+                : kind === "keyboard"
+                  ? Haptics.AndroidHaptics.Keyboard_Tap
             : Haptics.AndroidHaptics.Context_Click;
       await Haptics.performAndroidHapticsAsync(androidKind);
-    } else if (kind === "success") {
+    } else if (kind === "success" || kind === "log") {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } else if (kind === "error") {
+    } else if (kind === "error" || kind === "delete") {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } else if (kind === "warning") {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    } else if (kind === "swipe") {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Rigid);
+    } else if (kind === "edit") {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } else if (kind === "keyboard") {
+      await Haptics.selectionAsync();
     } else {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }

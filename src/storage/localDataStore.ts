@@ -36,6 +36,7 @@ export function migrateLocalData(input: unknown): AmyLocalData {
     entries: Array.isArray(raw.entries) ? raw.entries : fallback.entries,
     drafts: Array.isArray(raw.drafts) ? raw.drafts : fallback.drafts,
     savedMeals: Array.isArray(raw.savedMeals) ? raw.savedMeals : fallback.savedMeals,
+    weightLogs: Array.isArray(raw.weightLogs) ? raw.weightLogs : fallback.weightLogs,
     dayNotes: Array.isArray(raw.dayNotes) ? raw.dayNotes : fallback.dayNotes,
     streakRepairs: Array.isArray(raw.streakRepairs) ? raw.streakRepairs : fallback.streakRepairs,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : nowIso()
@@ -63,12 +64,22 @@ export async function saveLocalData(data: AmyLocalData): Promise<void> {
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ ...data, updatedAt: nowIso() }));
 }
 
+function exportableData(data: AmyLocalData): AmyLocalData {
+  return {
+    ...data,
+    settings: {
+      ...data.settings,
+      openRouterKey: ""
+    }
+  };
+}
+
 export function buildExportBundle(data: AmyLocalData): AmyExportBundle {
   return {
     kind: "amy-local-export",
     schemaVersion: SCHEMA_VERSION,
     exportedAt: nowIso(),
-    data: { ...data, schemaVersion: SCHEMA_VERSION, updatedAt: nowIso() }
+    data: { ...exportableData(data), schemaVersion: SCHEMA_VERSION, updatedAt: nowIso() }
   };
 }
 

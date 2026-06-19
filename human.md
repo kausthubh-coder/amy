@@ -12,6 +12,7 @@ Constraints to preserve:
 - Do not require birthday, gender, height, or activity onboarding.
 - Use custom calorie target plus weight goal as the main setup path.
 - Today supports previous/next day swiping and a calorie detail modal from the calorie pill.
+- Today is a line log: each typed line maps to one food/meal with a right-side loading/calorie state.
 - The plus button opens saved meals, not a generic add menu.
 - Stats has two screens/tabs: Stats and Streaks.
 - Plan two Android widgets: calories remaining, and a mini Today widget with deep links to type, barcode, camera, mic, and saved meals.
@@ -22,13 +23,8 @@ Reference inputs checked:
 
 - `/Users/kaust/Documents/coding/sandbox/fatass/.artifacts/video-feature-teardown/amy-reference-teardown.html`
 - `/Users/kaust/Documents/coding/sandbox/fatass/.artifacts/video-feature-teardown/source-metadata.json`
-- `/Users/kaust/Documents/coding/sandbox/fatass/.env.example`
 - `/Users/kaust/Documents/amy/screenshots/*.png`
 - `/Users/kaust/Documents/amy/screenshots/latest/*.PNG`
 - `/Users/kaust/Documents/amy/assets/amy-app-icon-dark-light-concept.png`
 
-The Fatass env example only contains placeholders. Use these variable names during implementation, but do not commit real secrets:
-
-- `EXPO_PUBLIC_OPENROUTER_API_KEY`
-- `EXPO_PUBLIC_OPENROUTER_MODEL`
-- `EXPO_PUBLIC_OPENROUTER_WEB_SEARCH`
+OpenRouter credentials are entered in Settings and stored locally. Do not add personal credentials to the repository.

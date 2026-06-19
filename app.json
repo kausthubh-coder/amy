@@ -5,7 +5,7 @@
     "scheme": "amy",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/icon-cat-alt.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -34,7 +34,7 @@
       ],
       "adaptiveIcon": {
         "backgroundColor": "#111111",
-        "foregroundImage": "./assets/adaptive-icon.png"
+        "foregroundImage": "./assets/icon-cat-alt.png"
       },
       "predictiveBackGestureEnabled": false
     },
@@ -58,6 +58,12 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "Allow Amy to use your rough location as context for nearby restaurant meal estimates."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Amy to choose a food photo from your gallery for calorie estimates."
         }
       ],
       "expo-sharing",

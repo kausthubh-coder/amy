@@ -5,7 +5,6 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ModalShell } from "./src/components/ModalShell";
 import { LocalDataProvider, useAppData } from "./src/store/AppDataContext";
 import { colors } from "./src/theme";
-import { CalorieDetailModal } from "./src/screens/CalorieDetailModal";
 import { CaptureModal } from "./src/screens/CaptureModal";
 import { CaptureMode, AppModal, TodayScreen } from "./src/screens/TodayScreen";
 import { OnboardingScreen } from "./src/screens/OnboardingScreen";
@@ -40,7 +39,7 @@ function routeFromUrl(
   if (clean.includes("saved")) return { modal: "saved" };
   if (clean.includes("stats")) return { modal: "stats" };
   if (clean.includes("settings")) return { modal: "settings" };
-  if (clean.includes("calories")) return { modal: "calories" };
+  if (clean.includes("calories")) return { modal: null };
 
   return null;
 }
@@ -100,9 +99,6 @@ function AppBody() {
     <View style={styles.shell}>
       <TodayScreen openModal={openModal} focusSignal={focusSignal} dictationSignal={dictationSignal} prefillText={prefillText} />
 
-      <ModalShell visible={activeModal === "calories"} title="Calories" onClose={() => setActiveModal(null)}>
-        <CalorieDetailModal />
-      </ModalShell>
       <ModalShell visible={activeModal === "saved"} title="Saved Meals" onClose={() => setActiveModal(null)}>
         <SavedMealsModal onDone={() => setActiveModal(null)} />
       </ModalShell>
@@ -112,7 +108,7 @@ function AppBody() {
       <ModalShell visible={activeModal === "settings"} title="Settings" onClose={() => setActiveModal(null)}>
         <SettingsModal />
       </ModalShell>
-      <ModalShell visible={activeModal === "capture"} title="Log Food" onClose={() => setActiveModal(null)}>
+      <ModalShell visible={activeModal === "capture"} onClose={() => setActiveModal(null)}>
         <CaptureModal mode={captureMode} onDone={() => setActiveModal(null)} focusTypeInput={() => focusTypeInput()} prefillBarcode={prefillBarcode} />
       </ModalShell>
     </View>

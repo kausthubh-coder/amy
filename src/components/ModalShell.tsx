@@ -12,18 +12,19 @@ export function ModalShell({
   onClose
 }: {
   visible: boolean;
-  title: string;
+  title?: string;
   children: ReactNode;
   onClose: () => void;
 }) {
+  const closeLabel = title ? `Close ${title}` : "Close";
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.backdrop}>
         <View style={styles.sheet}>
           <View style={styles.handle} />
-          <View style={styles.header}>
-            <Text style={styles.title}>{title}</Text>
-            <InteractivePressable accessibilityLabel={`Close ${title}`} onPress={onClose} style={styles.close}>
+          <View style={[styles.header, !title && styles.headerNoTitle]}>
+            {title ? <Text style={styles.title}>{title}</Text> : null}
+            <InteractivePressable accessibilityLabel={closeLabel} onPress={onClose} style={styles.close}>
               <X size={28} color={colors.muted} strokeWidth={2.4} />
             </InteractivePressable>
           </View>
@@ -64,6 +65,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 14
+  },
+  headerNoTitle: {
+    justifyContent: "flex-end",
+    marginBottom: 4
   },
   title: {
     color: colors.ink,

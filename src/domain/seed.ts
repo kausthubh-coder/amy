@@ -44,11 +44,22 @@ export function seedLocalData(): AmyLocalData {
       locationForRestaurants: false,
       reminders: false,
       dictationLanguage: "auto",
-      openRouterModel: "google/gemini-3.5-flash"
+      openRouterModel: "google/gemini-3.5-flash",
+      openRouterKey: ""
     },
     entries: [],
     drafts: [],
     savedMeals,
+    weightLogs: [
+      {
+        id: "weight_initial",
+        day: toDateKey(new Date()),
+        weightLbs: 218,
+        note: "Starting weight",
+        createdAt: now(),
+        updatedAt: now()
+      }
+    ],
     dayNotes: [{ day: toDateKey(new Date()), text: "", updatedAt: now() }],
     streakRepairs: [],
     updatedAt: now()

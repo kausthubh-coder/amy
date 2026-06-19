@@ -5,11 +5,12 @@ import React, { useMemo, useState } from "react";
 import { Platform, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 
 import { InteractivePressable } from "../components/InteractivePressable";
-import { privacyBoundary } from "../config/integrations";
+import { integrationConfig, privacyBoundary } from "../config/integrations";
 import { targetsFromCalories } from "../domain/nutrition";
 import { getLocationContext } from "../services/location";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
+import { labelForDay } from "../utils/date";
 
 function Row({
   icon,
@@ -35,10 +36,13 @@ function Row({
 }
 
 export function SettingsModal() {
-  const { data, updateGoal, updateSettings, exportText, importText } = useAppData();
+  const { data, selectedDay, updateGoal, updateSettings, logWeight, exportText, importText } = useAppData();
   const [calories, setCalories] = useState(String(data?.goal.dailyCalories ?? 2632));
   const [currentWeight, setCurrentWeight] = useState(String(data?.goal.currentWeightLbs ?? 218));
   const [goalWeight, setGoalWeight] = useState(String(data?.goal.weightGoalLbs ?? 154));
+  const [weightNote, setWeightNote] = useState("");
+  const [openRouterKey, setOpenRouterKey] = useState(data?.settings.openRouterKey ?? "");
+  const [openRouterModel, setOpenRouterModel] = useState(data?.settings.openRouterModel ?? integrationConfig.openRouter.defaultModel);
   const [importValue, setImportValue] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -53,6 +57,21 @@ export function SettingsModal() {
       weightGoalLbs: Number(goalWeight) || data.goal.weightGoalLbs
     });
     setNotice("Goals saved.");
+  };
+
+  const saveWeightLog = () => {
+    const weight = Number(currentWeight) || data.goal.currentWeightLbs;
+    logWeight(selectedDay, weight, weightNote);
+    setWeightNote("");
+    setNotice(`Weight logged for ${labelForDay(selectedDay)}.`);
+  };
+
+  const saveAiSettings = () => {
+    updateSettings({
+      openRouterKey: openRouterKey.trim(),
+      openRouterModel: openRouterModel.trim() || integrationConfig.openRouter.defaultModel
+    });
+    setNotice(openRouterKey.trim() ? "OpenRouter key saved locally." : "OpenRouter key cleared.");
   };
 
   const shareExport = async () => {
@@ -116,7 +135,61 @@ export function SettingsModal() {
       </View>
 
       <View style={styles.card}>
+        <Text style={styles.section}>Weight Tracking</Text>
+        <View style={styles.weightSummary}>
+          <View>
+            <Text style={styles.weight}>{data.goal.currentWeightLbs} lbs</Text>
+            <Text style={styles.goalLine}>Goal {data.goal.weightGoalLbs} lbs</Text>
+          </View>
+          <View style={styles.keyState}>
+            <Text style={styles.keyStateText}>{data.weightLogs.length}</Text>
+          </View>
+        </View>
+        <TextInput value={currentWeight} onChangeText={setCurrentWeight} keyboardType="number-pad" placeholder="Current lbs" placeholderTextColor={colors.dim} style={styles.input} />
+        <TextInput value={weightNote} onChangeText={setWeightNote} placeholder="Note, optional" placeholderTextColor={colors.dim} style={styles.input} />
+        <InteractivePressable feedbackKind="success" onPress={saveWeightLog} style={styles.secondaryButton}>
+          <Text style={styles.secondaryText}>Log weight</Text>
+        </InteractivePressable>
+        <View style={styles.weightHistory}>
+          {data.weightLogs.slice(0, 5).map((log) => (
+            <View key={log.id} style={styles.weightLogRow}>
+              <Text style={styles.weightLogDay}>{labelForDay(log.day)}</Text>
+              <Text style={styles.weightLogValue}>{log.weightLbs} lbs</Text>
+            </View>
+          ))}
+          {!data.weightLogs.length ? <Text style={styles.privacy}>No weight logs yet.</Text> : null}
+        </View>
+      </View>
+
+      <View style={styles.card}>
         <Text style={styles.section}>Preferences</Text>
+        <Row icon="✦" title="OpenRouter key" subtitle={data.settings.openRouterKey ? "Saved locally on this device" : "Needed for AI estimates"}>
+          <View style={styles.keyState}>
+            <Text style={styles.keyStateText}>{data.settings.openRouterKey ? "Set" : "Off"}</Text>
+          </View>
+        </Row>
+        <TextInput
+          value={openRouterKey}
+          onChangeText={setOpenRouterKey}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="sk-or-..."
+          placeholderTextColor={colors.dim}
+          style={styles.input}
+        />
+        <TextInput
+          value={openRouterModel}
+          onChangeText={setOpenRouterModel}
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder={integrationConfig.openRouter.defaultModel}
+          placeholderTextColor={colors.dim}
+          style={styles.input}
+        />
+        <InteractivePressable feedbackKind="edit" onPress={saveAiSettings} style={styles.secondaryButton}>
+          <Text style={styles.secondaryText}>Save OpenRouter</Text>
+        </InteractivePressable>
         <Row icon="↕" title="Calorie estimate bias" subtitle={data.settings.calorieBias.replaceAll("_", " ")}>
           <View style={styles.segment}>
             {(["under", "balanced", "over"] as const).map((bias) => (
@@ -282,6 +355,49 @@ const styles = StyleSheet.create({
   },
   smallButtonText: {
     color: colors.ink,
+    fontWeight: "900"
+  },
+  keyState: {
+    minWidth: 48,
+    height: 34,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  keyStateText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "900"
+  },
+  weightSummary: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
+  },
+  weightHistory: {
+    gap: 8
+  },
+  weightLogRow: {
+    minHeight: 42,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: colors.panel2
+  },
+  weightLogDay: {
+    color: colors.muted,
+    fontSize: 14,
+    fontWeight: "900"
+  },
+  weightLogValue: {
+    color: colors.ink,
+    fontSize: 15,
     fontWeight: "900"
   },
   privacy: {

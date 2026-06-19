@@ -26,8 +26,8 @@ type OpenFoodFactsResponse = {
 
 export type ProductLookupResult =
   | { status: "found"; draft: FoodDraft }
-  | { status: "not-found"; message: string }
-  | { status: "error"; message: string };
+  | { status: "not-found"; message: string; detail?: string }
+  | { status: "error"; message: string; detail?: string };
 
 const fields = [
   "code",
@@ -79,7 +79,7 @@ function macrosFromProduct(product: OpenFoodFactsProduct): MacroTotals | null {
 
 export async function lookupOpenFoodFactsProduct(barcode: string, day: string): Promise<ProductLookupResult> {
   const normalized = barcode.trim();
-  if (!normalized) return { status: "error", message: "No barcode was scanned." };
+  if (!normalized) return { status: "error", message: "No barcode yet.", detail: "Scan the package or type the number under the camera." };
 
   const url = `${integrationConfig.openFoodFacts.baseUrl}/api/v2/product/${encodeURIComponent(normalized)}.json?fields=${encodeURIComponent(fields)}`;
   const headers: Record<string, string> = { Accept: "application/json" };
@@ -87,13 +87,36 @@ export async function lookupOpenFoodFactsProduct(barcode: string, day: string): 
 
   try {
     const response = await fetch(url, { headers });
-    const body = (await response.json()) as OpenFoodFactsResponse;
+    let body: OpenFoodFactsResponse = {};
+    try {
+      body = (await response.json()) as OpenFoodFactsResponse;
+    } catch {
+      body = {};
+    }
 
-    if (!response.ok) return { status: "error", message: `Open Food Facts failed (${response.status}).` };
-    if (body.status !== 1 || !body.product) return { status: "not-found", message: "This barcode was not found in Open Food Facts." };
+    if (response.status === 404 || body.status !== 1 || !body.product) {
+      return {
+        status: "not-found",
+        message: "No Open Food Facts match yet.",
+        detail: "Try another angle, type the barcode, or log it as a photo meal."
+      };
+    }
+    if (!response.ok) {
+      return {
+        status: "error",
+        message: "Open Food Facts is having trouble.",
+        detail: `Lookup failed with status ${response.status}. Try again in a moment.`
+      };
+    }
 
     const macros = macrosFromProduct(body.product);
-    if (!macros) return { status: "not-found", message: "Open Food Facts found this product, but it is missing calories or macros." };
+    if (!macros) {
+      return {
+        status: "not-found",
+        message: "Product found, nutrition missing.",
+        detail: "Open Food Facts does not have enough calories/macros for this item yet."
+      };
+    }
 
     const title = [firstText(body.product.brands), firstText(body.product.product_name, body.product.product_name_en)]
       .filter(Boolean)
@@ -116,6 +139,10 @@ export async function lookupOpenFoodFactsProduct(barcode: string, day: string): 
       }
     };
   } catch {
-    return { status: "error", message: "Could not reach Open Food Facts. Check connection and try again." };
+    return {
+      status: "error",
+      message: "Could not reach Open Food Facts.",
+      detail: "Check your connection or try the barcode again."
+    };
   }
 }

@@ -1,11 +1,12 @@
 import { BarcodeScanningResult, CameraView, useCameraPermissions } from "expo-camera";
+import * as ImagePicker from "expo-image-picker";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, View } from "react-native";
-import { Camera, Keyboard, Mic, ScanBarcode, Tags } from "lucide-react-native";
+import { Camera, Circle, Flashlight, Image as ImageIcon, Keyboard, Mic, ScanBarcode, Tags } from "lucide-react-native";
 
 import { InteractivePressable } from "../components/InteractivePressable";
 import { lookupOpenFoodFactsProduct } from "../services/openFoodFacts";
-import { estimateMealImage, estimateMealText } from "../services/openRouter";
+import { estimateMealImage } from "../services/openRouter";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
 import { CaptureMode } from "./TodayScreen";
@@ -21,12 +22,13 @@ export function CaptureModal({
   focusTypeInput: () => void;
   prefillBarcode?: string;
 }) {
-  const { selectedDay, addDrafts } = useAppData();
+  const { data, selectedDay, addEntryFromDraft, appendDayNoteLine } = useAppData();
   const [permission, requestPermission] = useCameraPermissions();
   const [busy, setBusy] = useState(false);
   const [manualBarcode, setManualBarcode] = useState("");
   const [caption, setCaption] = useState("");
   const [notice, setNotice] = useState("");
+  const [torchOn, setTorchOn] = useState(false);
   const cameraRef = useRef<CameraView | null>(null);
   const lastPrefillLookupRef = useRef("");
 
@@ -43,11 +45,12 @@ export function CaptureModal({
     setBusy(true);
     const result = await lookupOpenFoodFactsProduct(cleanCode, selectedDay);
     if (result.status === "found") {
-      addDrafts([result.draft]);
-      setNotice("Open Food Facts match ready. Confirm it on Today.");
+      addEntryFromDraft(result.draft, result.draft.title);
+      appendDayNoteLine(selectedDay, result.draft.title);
+      setNotice("Open Food Facts logged.");
       onDone();
     } else {
-      setNotice(result.message);
+      setNotice(result.detail ? `${result.message}\n${result.detail}` : result.message);
     }
     setBusy(false);
   };
@@ -65,19 +68,26 @@ export function CaptureModal({
     void lookupBarcode(result.data);
   };
 
-  const captureImage = async () => {
-    if (busy) return;
-    if (!cameraRef.current) {
-      setNotice("Camera is not ready yet.");
-      return;
-    }
-    setBusy(true);
+  const analyzeImageUri = async (imageUri: string) => {
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.75 });
-      if (!photo?.uri) throw new Error("No image was captured.");
-      const estimate = await estimateMealImage({ imageUri: photo.uri, day: selectedDay, mode: mode === "label" ? "label" : "photo", caption });
-      addDrafts(estimate.drafts);
-      setNotice(estimate.error ?? estimate.notice ?? "Image estimate ready.");
+      setBusy(true);
+      const note = caption.trim();
+      const estimate = await estimateMealImage({
+        imageUri,
+        day: selectedDay,
+        mode: mode === "label" ? "label" : "photo",
+        caption: note,
+        context: {
+          openRouterKey: data?.settings.openRouterKey,
+          openRouterModel: data?.settings.openRouterModel
+        }
+      });
+      estimate.drafts.forEach((draft) => {
+        const rawInput = note || draft.rawInput || draft.title;
+        addEntryFromDraft(draft, rawInput);
+        appendDayNoteLine(selectedDay, rawInput);
+      });
+      setNotice(estimate.error ?? estimate.notice ?? "Image logged.");
       onDone();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not analyze this image.");
@@ -86,19 +96,34 @@ export function CaptureModal({
     }
   };
 
-  const analyzeTyped = async () => {
-    const prompt = caption.trim();
-    if (!prompt) {
-      focusTypeInput();
-      onDone();
+  const captureImage = async () => {
+    if (busy) return;
+    if (!cameraRef.current) {
+      setNotice("Camera is not ready yet.");
       return;
     }
-    setBusy(true);
-    const estimate = await estimateMealText(prompt, selectedDay);
-    addDrafts(estimate.drafts);
-    setNotice(estimate.error ?? estimate.notice ?? "Estimate ready.");
-    setBusy(false);
-    onDone();
+    const photo = await cameraRef.current.takePictureAsync({ quality: 0.82 });
+    if (!photo?.uri) {
+      setNotice("No image was captured.");
+      return;
+    }
+    await analyzeImageUri(photo.uri);
+  };
+
+  const pickImage = async () => {
+    if (busy) return;
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setNotice("Gallery permission is needed to choose a food photo.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.82,
+      allowsEditing: false
+    });
+    const asset = result.assets?.[0];
+    if (!result.canceled && asset?.uri) await analyzeImageUri(asset.uri);
   };
 
   if (mode === "type") {
@@ -142,39 +167,16 @@ export function CaptureModal({
   return (
     <View style={styles.stack}>
       <View style={styles.modeHeader}>
-        {mode === "barcode" ? <ScanBarcode size={30} color={colors.orange} /> : mode === "label" ? <Tags size={30} color={colors.pink} /> : <Camera size={30} color="#F141FF" />}
+        <View style={styles.modeIcon}>
+          {mode === "barcode" ? <ScanBarcode size={28} color={colors.orange} /> : mode === "label" ? <Tags size={28} color={colors.pink} /> : <Camera size={28} color="#F141FF" />}
+        </View>
         <View style={styles.modeText}>
           <Text style={styles.hero}>{mode === "barcode" ? "Scan barcode" : mode === "label" ? "Capture label" : "Capture meal"}</Text>
-          <Text style={styles.copy}>{mode === "barcode" ? "Scan packaged foods." : "Photos become editable drafts."}</Text>
+          <Text style={styles.copy}>
+            {mode === "barcode" ? "Point at the code or type the number below." : "Use a photo plus a note for better Gemini 3.5 estimates."}
+          </Text>
         </View>
       </View>
-
-      {mode === "barcode" ? (
-        <View style={styles.manualCard}>
-          <TextInput
-            value={manualBarcode}
-            onChangeText={(value) => setManualBarcode(value.replace(/\D/g, ""))}
-            keyboardType="number-pad"
-            inputMode="numeric"
-            returnKeyType="search"
-            onSubmitEditing={() => lookupBarcode(manualBarcode)}
-            placeholder="Enter barcode"
-            placeholderTextColor={colors.dim}
-            style={styles.input}
-          />
-          <InteractivePressable onPress={() => lookupBarcode(manualBarcode)} style={styles.secondaryButton}>
-            <Text style={styles.secondaryText}>Lookup barcode</Text>
-          </InteractivePressable>
-        </View>
-      ) : (
-        <TextInput
-          value={caption}
-          onChangeText={setCaption}
-          placeholder={mode === "label" ? "Optional label note" : "Optional photo note"}
-          placeholderTextColor={colors.dim}
-          style={styles.input}
-        />
-      )}
 
       {canUseCamera ? (
         !permission?.granted ? (
@@ -188,26 +190,73 @@ export function CaptureModal({
               ref={cameraRef}
               style={styles.camera}
               facing="back"
+              enableTorch={torchOn}
+              barcodeScannerSettings={mode === "barcode" ? { barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "code128"] } : undefined}
               onBarcodeScanned={mode === "barcode" && !busy ? handleBarcode : undefined}
             />
-            {mode !== "barcode" ? (
-              <InteractivePressable onPress={captureImage} disabled={busy} style={styles.shutter}>
-                {busy ? <ActivityIndicator color={colors.ink} /> : <Text style={styles.shutterText}>Capture</Text>}
+            <View style={styles.cameraScrim} pointerEvents="none" />
+            {mode === "barcode" ? <View style={styles.scanFrame} pointerEvents="none" /> : null}
+            <View style={styles.overlayTop}>
+              <InteractivePressable
+                accessibilityLabel={torchOn ? "Turn flashlight off" : "Turn flashlight on"}
+                onPress={() => setTorchOn((value) => !value)}
+                style={[styles.overlayButton, torchOn && styles.overlayButtonOn]}
+              >
+                <Flashlight size={21} color={torchOn ? colors.bg : colors.ink} strokeWidth={2.5} />
               </InteractivePressable>
-            ) : null}
+              {mode !== "barcode" ? (
+                <InteractivePressable accessibilityLabel="Choose from gallery" onPress={pickImage} style={styles.overlayButton}>
+                  <ImageIcon size={21} color={colors.ink} strokeWidth={2.5} />
+                </InteractivePressable>
+              ) : null}
+            </View>
+            {mode !== "barcode" ? (
+              <View style={styles.overlayBottom}>
+                <InteractivePressable accessibilityLabel="Capture food photo" onPress={captureImage} disabled={busy} style={styles.captureButton}>
+                  {busy ? <ActivityIndicator color={colors.ink} /> : <Circle size={34} color={colors.ink} fill={colors.ink} strokeWidth={2.2} />}
+                </InteractivePressable>
+              </View>
+            ) : (
+              <View style={styles.barcodeHint} pointerEvents="none">
+                <ScanBarcode size={24} color={colors.ink} />
+                <Text style={styles.barcodeHintText}>Align barcode inside the frame</Text>
+              </View>
+            )}
           </View>
         )
       ) : (
         <Text style={styles.notice}>Camera preview is Android-first. Use manual barcode or typing in web preview.</Text>
       )}
 
+      {mode === "barcode" ? (
+        <View style={styles.manualCard}>
+          <TextInput
+            value={manualBarcode}
+            onChangeText={(value) => setManualBarcode(value.replace(/\D/g, ""))}
+            keyboardType="number-pad"
+            inputMode="numeric"
+            returnKeyType="search"
+            onSubmitEditing={() => lookupBarcode(manualBarcode)}
+            placeholder="Type barcode number"
+            placeholderTextColor={colors.dim}
+            style={styles.input}
+          />
+          <InteractivePressable onPress={() => lookupBarcode(manualBarcode)} style={styles.secondaryButton}>
+            <Text style={styles.secondaryText}>{busy ? "Checking..." : "Check Open Food Facts"}</Text>
+          </InteractivePressable>
+        </View>
+      ) : (
+        <TextInput
+          value={caption}
+          onChangeText={setCaption}
+          placeholder={mode === "label" ? "Typed note for the label photo" : "Typed note for the food photo"}
+          placeholderTextColor={colors.dim}
+          style={styles.input}
+        />
+      )}
+
       {busy ? <ActivityIndicator color={colors.purple} /> : null}
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
-      {mode !== "barcode" ? (
-        <InteractivePressable onPress={analyzeTyped} style={styles.secondaryButton}>
-          <Text style={styles.secondaryText}>Estimate from typed note instead</Text>
-        </InteractivePressable>
-      ) : null}
     </View>
   );
 }
@@ -220,9 +269,17 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
     alignItems: "center",
-    padding: 18,
-    borderRadius: 28,
-    backgroundColor: colors.panel
+    paddingHorizontal: 2
+  },
+  modeIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.line
   },
   modeText: {
     flex: 1
@@ -240,9 +297,11 @@ const styles = StyleSheet.create({
   },
   manualCard: {
     gap: 10,
-    padding: 16,
-    borderRadius: 24,
-    backgroundColor: colors.panel
+    padding: 14,
+    borderRadius: 22,
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.line
   },
   input: {
     minHeight: 56,
@@ -282,23 +341,87 @@ const styles = StyleSheet.create({
   },
   cameraCard: {
     overflow: "hidden",
-    borderRadius: 28,
+    minHeight: 420,
+    borderRadius: 26,
     backgroundColor: colors.panel,
     borderWidth: 1,
-    borderColor: colors.line
+    borderColor: colors.line,
+    position: "relative"
   },
   camera: {
-    height: 370
+    height: 420
   },
-  shutter: {
-    height: 62,
+  cameraScrim: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: "rgba(0, 0, 0, 0.08)"
+  },
+  overlayTop: {
+    position: "absolute",
+    top: 14,
+    right: 14,
+    flexDirection: "row",
+    gap: 10
+  },
+  overlayButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.orange
+    backgroundColor: "rgba(17, 17, 17, 0.74)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.18)"
   },
-  shutterText: {
-    color: colors.bg,
-    fontSize: 18,
+  overlayButtonOn: {
+    backgroundColor: colors.yellow,
+    borderColor: colors.yellow
+  },
+  overlayBottom: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 18,
+    alignItems: "center"
+  },
+  captureButton: {
+    width: 74,
+    height: 74,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.24)",
+    borderWidth: 4,
+    borderColor: colors.ink
+  },
+  scanFrame: {
+    position: "absolute",
+    left: 34,
+    right: 34,
+    top: 132,
+    height: 136,
+    borderRadius: 22,
+    borderWidth: 3,
+    borderColor: colors.orange,
+    backgroundColor: "rgba(255, 152, 36, 0.08)"
+  },
+  barcodeHint: {
+    position: "absolute",
+    left: 18,
+    right: 18,
+    bottom: 18,
+    minHeight: 54,
+    borderRadius: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "rgba(17, 17, 17, 0.76)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.16)"
+  },
+  barcodeHintText: {
+    color: colors.ink,
+    fontSize: 14,
     fontWeight: "900"
   },
   notice: {

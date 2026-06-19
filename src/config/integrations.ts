@@ -1,13 +1,7 @@
-const openRouterApiKey = process.env.EXPO_PUBLIC_OPENROUTER_API_KEY?.trim() ?? "";
-const openRouterModel = process.env.EXPO_PUBLIC_OPENROUTER_MODEL?.trim() || "google/gemini-3.5-flash";
-const openRouterWebSearch = process.env.EXPO_PUBLIC_OPENROUTER_WEB_SEARCH?.trim() !== "false";
-
 export const integrationConfig = {
   openRouter: {
-    apiKey: openRouterApiKey,
-    model: openRouterModel,
-    webSearchEnabled: openRouterWebSearch,
-    configured: openRouterApiKey.length > 0 && openRouterApiKey !== "sk-or-your-key"
+    webSearchEnabled: true,
+    defaultModel: "google/gemini-3.5-flash"
   },
   openFoodFacts: {
     baseUrl: "https://world.openfoodfacts.org",

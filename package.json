@@ -10,6 +10,8 @@
     "android": "expo start --android",
     "test": "tsc --noEmit",
     "expo": "expo start",
+    "prebuild:android": "expo prebuild --platform android --no-install",
+    "build:local:android": "cd android && ./gradlew assembleRelease",
     "eas:login": "npx eas-cli@latest login",
     "build:dev:android": "npx eas-cli@latest build --profile development --platform android",
     "build:preview:android": "npx eas-cli@latest build --profile preview --platform android --non-interactive --wait"
@@ -22,6 +24,7 @@
     "expo-clipboard": "~56.0.0",
     "expo-file-system": "~56.0.8",
     "expo-haptics": "~56.0.3",
+    "expo-image-picker": "~56.0.18",
     "expo-location": "~56.0.18",
     "expo-sharing": "~56.0.18",
     "expo-speech-recognition": "^56.0.1",

@@ -19,6 +19,7 @@ export function StatsModal() {
   if (!data) return null;
 
   const activeDays = new Set(data.entries.map((entry) => entry.day));
+  const weightLogs = data.weightLogs.slice(0, 7).reverse();
 
   return (
     <View style={styles.stack}>
@@ -39,8 +40,8 @@ export function StatsModal() {
             { label: "Protein", field: "protein" as const, color: colors.blue, target: data.goal.proteinTarget },
             { label: "Carbs", field: "carbs" as const, color: colors.pink, target: data.goal.carbsTarget },
             { label: "Fat", field: "fat" as const, color: "#E35BFF", target: data.goal.fatTarget }
-          ].map((metric) => (
-            <View key={metric.label} style={styles.chartCard}>
+	          ].map((metric) => (
+	            <View key={metric.label} style={styles.chartCard}>
               <View style={styles.chartHeader}>
                 <Text style={styles.chartTitle}>{metric.label}</Text>
                 <Text style={styles.chartAvg}>Goal {Math.round(metric.target)}</Text>
@@ -56,9 +57,24 @@ export function StatsModal() {
                   );
                 })}
               </View>
-            </View>
-          ))}
-        </>
+	            </View>
+	          ))}
+	          <View style={styles.chartCard}>
+	            <View style={styles.chartHeader}>
+	              <Text style={styles.chartTitle}>Weight</Text>
+	              <Text style={styles.chartAvg}>Goal {data.goal.weightGoalLbs} lbs</Text>
+	            </View>
+	            <View style={styles.weightTrend}>
+	              {weightLogs.map((log) => (
+	                <View key={log.id} style={styles.weightPoint}>
+	                  <Text style={styles.weightValue}>{log.weightLbs}</Text>
+	                  <Text style={styles.dayLabel}>{dateFromKey(log.day).toLocaleDateString(undefined, { month: "numeric", day: "numeric" })}</Text>
+	                </View>
+	              ))}
+	              {!weightLogs.length ? <Text style={styles.empty}>Log weight in Settings to start a trend.</Text> : null}
+	            </View>
+	          </View>
+	        </>
       ) : (
         <>
           <View style={styles.flameCard}>
@@ -161,6 +177,32 @@ const styles = StyleSheet.create({
   dayLabel: {
     color: colors.muted,
     fontWeight: "900"
+  },
+  weightTrend: {
+    minHeight: 92,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "flex-end",
+    gap: 10
+  },
+  weightPoint: {
+    minWidth: 54,
+    borderRadius: 18,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.panel2
+  },
+  weightValue: {
+    color: colors.ink,
+    fontSize: 18,
+    fontWeight: "900"
+  },
+  empty: {
+    color: colors.muted,
+    fontSize: 16,
+    fontWeight: "800"
   },
   flameCard: {
     alignItems: "center",

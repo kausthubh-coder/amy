@@ -1,12 +1,12 @@
 import React, { ReactNode, useRef } from "react";
 import { Animated, GestureResponderEvent, Platform, Pressable, PressableProps, StyleProp, ViewStyle } from "react-native";
 
-import { feedback } from "../services/feedback";
+import { feedback, FeedbackKind } from "../services/feedback";
 
 type Props = Omit<PressableProps, "style" | "children"> & {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
-  feedbackKind?: "tap" | "success" | "warning" | "error";
+  feedbackKind?: FeedbackKind;
   sound?: boolean;
 };
 

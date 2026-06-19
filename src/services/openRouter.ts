@@ -5,7 +5,7 @@ import { integrationConfig } from "../config/integrations";
 import { FoodDraft, FoodSource, MacroTotals } from "../domain/types";
 import { createId } from "../domain/seed";
 
-type OpenRouterResponse = {
+type ChatCompletionResponse = {
   choices?: Array<{ message?: { content?: string } }>;
   error?: { message?: string };
 };
@@ -56,7 +56,7 @@ function parseModelJson(content: string): AiPayload {
   } catch {
     const start = trimmed.indexOf("{");
     const end = trimmed.lastIndexOf("}");
-    if (start === -1 || end <= start) throw new Error("OpenRouter returned text instead of JSON.");
+    if (start === -1 || end <= start) throw new Error("AI provider returned text instead of JSON.");
     return JSON.parse(trimmed.slice(start, end + 1)) as AiPayload;
   }
 }
@@ -64,12 +64,14 @@ function parseModelJson(content: string): AiPayload {
 type EstimateContext = {
   calorieBias?: string;
   locationLabel?: string;
+  openRouterKey?: string;
+  openRouterModel?: string;
 };
 
 function localEstimate(prompt: string, day: string, source: FoodSource = "local_fallback"): FoodDraft {
   const lower = prompt.toLowerCase();
   let macros: MacroTotals = { calories: 520, carbs: 52, protein: 28, fat: 22 };
-  if (lower.includes("chick") || lower.includes("sandwich")) macros = { calories: 1150, carbs: 102, protein: 33, fat: 69 };
+  if (lower.includes("chick") || lower.includes("chick-fil-a")) macros = { calories: 1150, carbs: 102, protein: 33, fat: 69 };
   if (lower.includes("egg")) macros = { calories: 390, carbs: 34, protein: 22, fat: 18 };
   if (lower.includes("salad")) macros = { calories: 530, carbs: 31, protein: 42, fat: 28 };
 
@@ -82,7 +84,7 @@ function localEstimate(prompt: string, day: string, source: FoodSource = "local_
     macros,
     source,
     confidence: 0.55,
-    sourceLabel: integrationConfig.openRouter.configured ? "Local fallback" : "Local estimate - add OpenRouter key for AI",
+    sourceLabel: "Local estimate",
     createdAt: new Date().toISOString()
   };
 }
@@ -146,6 +148,30 @@ const systemPrompt = [
   "No markdown, no explanation."
 ].join("\n");
 
+const foodItemsSchema = {
+  type: "object",
+  properties: {
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          servingLabel: { type: "string" },
+          calories: { type: "number" },
+          carbs: { type: "number" },
+          protein: { type: "number" },
+          fat: { type: "number" },
+          confidence: { type: "number" },
+          sourceLabel: { type: "string" }
+        },
+        required: ["title", "servingLabel", "calories", "carbs", "protein", "fat", "confidence", "sourceLabel"]
+      }
+    }
+  },
+  required: ["items"]
+};
+
 function buildUserContent(prompt: string, context?: EstimateContext) {
   const lines = [prompt.trim()];
   if (context?.locationLabel) lines.push(`Rough location context for restaurant guesses: ${context.locationLabel}.`);
@@ -162,21 +188,22 @@ async function imageUriToDataUrl(uri: string): Promise<string> {
 
 export async function estimateMealText(prompt: string, day: string, context?: EstimateContext): Promise<{ drafts: FoodDraft[]; notice?: string; error?: string }> {
   const fallback = localEstimate(prompt, day);
-  if (!integrationConfig.openRouter.configured) {
-    return { drafts: [fallback], notice: "OpenRouter key not found. Amy used an editable local estimate." };
+  const apiKey = context?.openRouterKey?.trim() ?? "";
+  if (!apiKey) {
+    return { drafts: [fallback], notice: "Add an OpenRouter key in Settings for AI estimates." };
   }
 
   try {
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${integrationConfig.openRouter.apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
         "HTTP-Referer": "https://amy.local",
         "X-OpenRouter-Title": "Amy Local"
       },
       body: JSON.stringify({
-        model: integrationConfig.openRouter.model,
+        model: context?.openRouterModel?.trim() || integrationConfig.openRouter.defaultModel,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: buildUserContent(prompt, context) }
@@ -190,9 +217,9 @@ export async function estimateMealText(prompt: string, day: string, context?: Es
     });
 
     const textBody = await response.text();
-    let payload: OpenRouterResponse = {};
+    let payload: ChatCompletionResponse = {};
     try {
-      payload = JSON.parse(textBody) as OpenRouterResponse;
+      payload = JSON.parse(textBody) as ChatCompletionResponse;
     } catch {
       payload = {};
     }
@@ -209,7 +236,7 @@ export async function estimateMealText(prompt: string, day: string, context?: Es
 
     const unique = uniqueDrafts(drafts);
     if (!unique.length) throw new Error("OpenRouter returned no usable food items.");
-    return { drafts: unique, notice: "AI estimate ready. Confirm before saving." };
+    return { drafts: unique, notice: "AI estimate ready." };
   } catch (error) {
     return {
       drafts: [fallback],
@@ -223,18 +250,21 @@ export async function estimateMealImage({
   imageUri,
   day,
   mode,
-  caption
+  caption,
+  context
 }: {
   imageUri: string;
   day: string;
   mode: "photo" | "label";
   caption?: string;
+  context?: EstimateContext;
 }): Promise<{ drafts: FoodDraft[]; notice?: string; error?: string }> {
   const source: FoodSource = mode === "label" ? "label_ocr" : "ai_photo";
   const fallback = localEstimate(caption || (mode === "label" ? "Nutrition label photo" : "Meal photo"), day, source);
+  const apiKey = context?.openRouterKey?.trim() ?? "";
 
-  if (!integrationConfig.openRouter.configured) {
-    return { drafts: [fallback], notice: "OpenRouter key not found. Amy used an editable image fallback." };
+  if (!apiKey) {
+    return { drafts: [fallback], notice: "Add an OpenRouter key in Settings for AI image estimates." };
   }
 
   try {
@@ -247,13 +277,13 @@ export async function estimateMealImage({
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${integrationConfig.openRouter.apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
         "HTTP-Referer": "https://amy.local",
         "X-OpenRouter-Title": "Amy Local"
       },
       body: JSON.stringify({
-        model: integrationConfig.openRouter.model,
+        model: context?.openRouterModel?.trim() || integrationConfig.openRouter.defaultModel,
         messages: [
           { role: "system", content: systemPrompt },
           {
@@ -269,7 +299,7 @@ export async function estimateMealImage({
       })
     });
 
-    const body = (await response.json()) as OpenRouterResponse;
+    const body = (await response.json()) as ChatCompletionResponse;
     if (!response.ok) throw new Error(body.error?.message ?? `OpenRouter failed (${response.status}).`);
 
     const content = body.choices?.[0]?.message?.content;
@@ -284,7 +314,7 @@ export async function estimateMealImage({
 
     const unique = uniqueDrafts(drafts);
     if (!unique.length) throw new Error("OpenRouter returned no usable image estimate.");
-    return { drafts: unique, notice: mode === "label" ? "Label estimate ready. Confirm before saving." : "Photo estimate ready. Confirm before saving." };
+    return { drafts: unique, notice: mode === "label" ? "Label estimate ready." : "Photo estimate ready." };
   } catch (error) {
     return {
       drafts: [{ ...fallback, imageUri }],

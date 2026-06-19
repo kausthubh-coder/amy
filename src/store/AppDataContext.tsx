@@ -2,7 +2,7 @@ import React, { createContext, ReactNode, useContext, useEffect, useMemo, useSta
 
 import { createId } from "../domain/seed";
 import { targetsFromCalories } from "../domain/nutrition";
-import { AmyLocalData, AppSettings, FoodDraft, FoodEntry, GoalProfile, SavedMeal } from "../domain/types";
+import { AmyLocalData, AppSettings, FoodDraft, FoodEntry, GoalProfile, SavedMeal, WeightLog } from "../domain/types";
 import { addDays, toDateKey } from "../utils/date";
 import { loadLocalData, parseImportText, saveLocalData, serializeExport } from "../storage/localDataStore";
 import { syncAndroidWidgets } from "../services/androidWidgetSync";
@@ -14,13 +14,17 @@ type AppDataContextValue = {
   setSelectedDay: (day: string) => void;
   shiftDay: (days: number) => void;
   updateDayNote: (day: string, text: string) => void;
+  appendDayNoteLine: (day: string, text: string) => void;
   completeOnboarding: (goal: Partial<GoalProfile>) => void;
   updateGoal: (goal: Partial<GoalProfile>) => void;
   updateSettings: (settings: Partial<AppSettings>) => void;
   addDrafts: (drafts: FoodDraft[]) => void;
+  addEntryFromDraft: (draft: FoodDraft, rawInput?: string) => FoodEntry;
   confirmDraft: (draftId: string) => void;
   updateDraft: (draftId: string, patch: Partial<FoodDraft>) => void;
+  updateEntry: (entryId: string, patch: Partial<FoodEntry>) => void;
   deleteEntry: (entryId: string) => void;
+  logWeight: (day: string, weightLbs: number, note?: string) => void;
   addSavedMeal: (meal: Omit<SavedMeal, "id" | "createdAt">) => void;
   logSavedMeal: (mealId: string, day: string) => void;
   exportText: () => string;
@@ -32,6 +36,38 @@ const AppDataContext = createContext<AppDataContextValue | null>(null);
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function weightLogForDay(day: string, weightLbs: number, note?: string): WeightLog {
+  const timestamp = nowIso();
+  return {
+    id: createId("weight"),
+    day,
+    weightLbs,
+    note: note?.trim() || undefined,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+}
+
+function updateDayNotes(notes: AmyLocalData["dayNotes"], day: string, text: string) {
+  const existing = notes.find((note) => note.day === day);
+  return existing
+    ? notes.map((note) => (note.day === day ? { ...note, text, updatedAt: nowIso() } : note))
+    : [...notes, { day, text, updatedAt: nowIso() }];
+}
+
+function appendNoteLine(notes: AmyLocalData["dayNotes"], day: string, rawLine: string) {
+  const line = rawLine.trim();
+  if (!line) return notes;
+  const existing = notes.find((note) => note.day === day);
+  const currentText = existing?.text ?? "";
+  const lines = currentText
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (lines.some((item) => item.toLowerCase() === line.toLowerCase())) return notes;
+  return updateDayNotes(notes, day, [...lines, line].join("\n"));
 }
 
 function draftKey(draft: FoodDraft) {
@@ -67,6 +103,23 @@ function normalizeDraft(draft: FoodDraft): FoodDraft {
 function normalizeEntry(entry: FoodEntry): FoodEntry {
   const sourceLabel = cleanSourceLabel(entry.source, entry.sourceLabel);
   return sourceLabel === entry.sourceLabel ? entry : { ...entry, sourceLabel };
+}
+
+function entryFromDraft(draft: FoodDraft, rawInput = draft.rawInput): FoodEntry {
+  return normalizeEntry({
+    id: createId("entry"),
+    day: draft.day,
+    rawInput,
+    title: draft.title,
+    servingLabel: draft.servingLabel,
+    macros: draft.macros,
+    source: draft.source,
+    confidence: draft.confidence,
+    sourceLabel: draft.sourceLabel,
+    barcode: draft.barcode,
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  });
 }
 
 function dedupeDrafts(drafts: FoodDraft[]) {
@@ -131,19 +184,26 @@ export function LocalDataProvider({ children }: { children: ReactNode }) {
       shiftDay: (days) => setSelectedDay((day) => addDays(day, days)),
       updateDayNote: (day, text) =>
         commit((current) => {
-          const existing = current.dayNotes.find((note) => note.day === day);
-          const dayNotes = existing
-            ? current.dayNotes.map((note) => (note.day === day ? { ...note, text, updatedAt: nowIso() } : note))
-            : [...current.dayNotes, { day, text, updatedAt: nowIso() }];
-          return { ...current, dayNotes, updatedAt: nowIso() };
+          return { ...current, dayNotes: updateDayNotes(current.dayNotes, day, text), updatedAt: nowIso() };
+        }),
+      appendDayNoteLine: (day, text) =>
+        commit((current) => {
+          return { ...current, dayNotes: appendNoteLine(current.dayNotes, day, text), updatedAt: nowIso() };
         }),
       completeOnboarding: (goal) =>
         commit((current) => {
           const dailyCalories = goal.dailyCalories ?? current.goal.dailyCalories;
+          const currentWeightLbs = goal.currentWeightLbs ?? current.goal.currentWeightLbs;
           return {
             ...current,
-            goal: { ...current.goal, ...targetsFromCalories(dailyCalories), ...goal, dailyCalories },
+            goal: { ...current.goal, ...targetsFromCalories(dailyCalories), ...goal, dailyCalories, currentWeightLbs },
             settings: { ...current.settings, onboardingDone: true },
+            weightLogs:
+              current.weightLogs.length === 1 && current.weightLogs[0]?.id === "weight_initial"
+                ? [{ ...current.weightLogs[0], day: selectedDay, weightLbs: currentWeightLbs, updatedAt: nowIso() }]
+                : current.weightLogs.length > 0
+                  ? current.weightLogs
+                  : [weightLogForDay(selectedDay, currentWeightLbs, "Starting weight")],
             updatedAt: nowIso()
           };
         }),
@@ -173,32 +233,47 @@ export function LocalDataProvider({ children }: { children: ReactNode }) {
           drafts: current.drafts.map((draft) => (draft.id === draftId ? { ...draft, ...patch } : draft)),
           updatedAt: nowIso()
         })),
+      addEntryFromDraft: (draft, rawInput) => {
+        const entry = entryFromDraft(draft, rawInput);
+        commit((current) => ({
+          ...current,
+          entries: [entry, ...current.entries],
+          drafts: current.drafts.filter((item) => item.id !== draft.id),
+          dayNotes: appendNoteLine(current.dayNotes, entry.day, entry.rawInput ?? entry.title),
+          updatedAt: nowIso()
+        }));
+        return entry;
+      },
       confirmDraft: (draftId) =>
         commit((current) => {
           const draft = current.drafts.find((item) => item.id === draftId);
           if (!draft) return current;
-          const entry: FoodEntry = {
-            id: createId("entry"),
-            day: draft.day,
-            title: draft.title,
-            servingLabel: draft.servingLabel,
-            macros: draft.macros,
-            source: draft.source,
-            confidence: draft.confidence,
-            sourceLabel: draft.sourceLabel,
-            barcode: draft.barcode,
-            createdAt: nowIso(),
-            updatedAt: nowIso()
-          };
+          const entry = entryFromDraft(draft);
           return {
             ...current,
             entries: [entry, ...current.entries],
             drafts: current.drafts.filter((item) => item.id !== draftId),
+            dayNotes: appendNoteLine(current.dayNotes, draft.day, draft.rawInput),
             updatedAt: nowIso()
           };
         }),
+      updateEntry: (entryId, patch) =>
+        commit((current) => ({
+          ...current,
+          entries: current.entries.map((entry) =>
+            entry.id === entryId ? normalizeEntry({ ...entry, ...patch, updatedAt: nowIso() }) : entry
+          ),
+          updatedAt: nowIso()
+        })),
       deleteEntry: (entryId) =>
         commit((current) => ({ ...current, entries: current.entries.filter((entry) => entry.id !== entryId), updatedAt: nowIso() })),
+      logWeight: (day, weightLbs, note) =>
+        commit((current) => ({
+          ...current,
+          goal: { ...current.goal, currentWeightLbs: weightLbs },
+          weightLogs: [weightLogForDay(day, weightLbs, note), ...current.weightLogs],
+          updatedAt: nowIso()
+        })),
       addSavedMeal: (meal) =>
         commit((current) => ({
           ...current,
@@ -212,6 +287,7 @@ export function LocalDataProvider({ children }: { children: ReactNode }) {
           const entry: FoodEntry = {
             id: createId("entry_saved"),
             day,
+            rawInput: meal.title,
             title: meal.title,
             servingLabel: meal.servingLabel,
             macros: meal.macros,
@@ -225,6 +301,7 @@ export function LocalDataProvider({ children }: { children: ReactNode }) {
             ...current,
             entries: [entry, ...current.entries],
             savedMeals: current.savedMeals.map((item) => (item.id === mealId ? { ...item, lastLoggedAt: nowIso() } : item)),
+            dayNotes: appendNoteLine(current.dayNotes, day, meal.title),
             updatedAt: nowIso()
           };
         }),

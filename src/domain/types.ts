@@ -10,6 +10,7 @@ export type FoodSource = "ai_text" | "ai_photo" | "label_ocr" | "open_food_facts
 export type FoodEntry = {
   id: string;
   day: string;
+  rawInput?: string;
   title: string;
   servingLabel: string;
   macros: MacroTotals;
@@ -45,6 +46,15 @@ export type SavedMeal = {
   createdAt: string;
 };
 
+export type WeightLog = {
+  id: string;
+  day: string;
+  weightLbs: number;
+  note?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type GoalProfile = {
   dailyCalories: number;
   weightGoalLbs: number;
@@ -62,6 +72,7 @@ export type AppSettings = {
   reminders: boolean;
   dictationLanguage: string;
   openRouterModel: string;
+  openRouterKey: string;
 };
 
 export type DayNote = {
@@ -78,6 +89,7 @@ export type AmyLocalData = {
   entries: FoodEntry[];
   drafts: FoodDraft[];
   savedMeals: SavedMeal[];
+  weightLogs: WeightLog[];
   dayNotes: DayNote[];
   streakRepairs: string[];
   updatedAt: string;
