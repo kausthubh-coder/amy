@@ -1,0 +1,15 @@
+node_modules/
+.expo/
+dist/
+android/
+ios/
+artifacts/
+builds/
+screenshots/
+.DS_Store
+amy-*.png
+android-*.png
+*.apk
+*.aab
+.env
+*.log

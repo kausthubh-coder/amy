@@ -1,0 +1,88 @@
+{
+  "expo": {
+    "name": "Amy",
+    "slug": "amy-calorie-tracker",
+    "scheme": "amy",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSSpeechRecognitionUsageDescription": "Allow Amy to turn dictated meals into editable text.",
+        "NSMicrophoneUsageDescription": "Allow Amy to hear meal dictation when you tap the mic."
+      }
+    },
+    "android": {
+      "package": "com.kaust.amy",
+      "softwareKeyboardLayoutMode": "resize",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "VIBRATE",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#111111",
+        "foregroundImage": "./assets/adaptive-icon.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "./plugins/withAmyAndroidWidgets",
+      [
+        "expo-status-bar",
+        {
+          "style": "light"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Amy to scan barcodes, nutrition labels, and meals.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Amy to use your rough location as context for nearby restaurant meal estimates."
+        }
+      ],
+      "expo-sharing",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow Amy to hear meal dictation when you tap the mic.",
+          "speechRecognitionPermission": "Allow Amy to turn dictated meals into editable text.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox"
+          ]
+        }
+      ]
+    ],
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "expo-status-bar": {
+        "style": "light"
+      },
+      "eas": {
+        "projectId": "8826d33a-fc7f-4d8a-970c-7532e6adb3fc"
+      }
+    },
+    "owner": "kausthubh"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "amy-calorie-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "dev": "expo start --host lan",
+    "start": "npm run dev",
+    "web": "expo start --web --host lan",
+    "android": "expo start --android",
+    "test": "tsc --noEmit",
+    "expo": "expo start",
+    "eas:login": "npx eas-cli@latest login",
+    "build:dev:android": "npx eas-cli@latest build --profile development --platform android",
+    "build:preview:android": "npx eas-cli@latest build --profile preview --platform android --non-interactive --wait"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~56.0.15",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "~56.0.12",
+    "expo-camera": "~56.0.8",
+    "expo-clipboard": "~56.0.0",
+    "expo-file-system": "~56.0.8",
+    "expo-haptics": "~56.0.3",
+    "expo-location": "~56.0.18",
+    "expo-sharing": "~56.0.18",
+    "expo-speech-recognition": "^56.0.1",
+    "expo-status-bar": "~56.0.4",
+    "expo-system-ui": "~56.0.5",
+    "lucide-react-native": "^1.20.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.85.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-svg": "15.15.4",
+    "react-native-web": "^0.21.2"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  }
+}
