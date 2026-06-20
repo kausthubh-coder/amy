@@ -2,14 +2,93 @@ import { BarcodeScanningResult, CameraView, useCameraPermissions } from "expo-ca
 import * as ImagePicker from "expo-image-picker";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
-import { Camera, Circle, Flashlight, Image as ImageIcon, Keyboard, Mic, ScanBarcode } from "lucide-react-native";
+import { Barcode, Camera, Circle, Flashlight, Image as ImageIcon, Keyboard, Mic } from "lucide-react-native";
 
 import { InteractivePressable } from "../components/InteractivePressable";
+import { createId } from "../domain/seed";
+import { FoodDraft, MacroTotals } from "../domain/types";
+import { getLocationContext } from "../services/location";
 import { lookupOpenFoodFactsProduct } from "../services/openFoodFacts";
 import { estimateMealImage } from "../services/openRouter";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
 import { CaptureMode } from "./TodayScreen";
+
+function cleanTitle(value: string) {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function uniqueTitles(drafts: FoodDraft[]) {
+  const seen = new Set<string>();
+  return drafts
+    .map((draft) => cleanTitle(draft.title))
+    .filter((title) => {
+      const key = title.toLowerCase();
+      if (!title || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function readableList(titles: string[]) {
+  if (!titles.length) return "";
+  if (titles.length === 1) return titles[0]!;
+  if (titles.length === 2) return `${titles[0]} and ${titles[1]}`;
+  return `${titles.slice(0, 2).join(", ")} and ${titles.length - 2} more`;
+}
+
+function sumMacros(drafts: FoodDraft[]): MacroTotals {
+  return drafts.reduce(
+    (total, draft) => ({
+      calories: total.calories + draft.macros.calories,
+      carbs: Math.round((total.carbs + draft.macros.carbs) * 10) / 10,
+      protein: Math.round((total.protein + draft.macros.protein) * 10) / 10,
+      fat: Math.round((total.fat + draft.macros.fat) * 10) / 10
+    }),
+    { calories: 0, carbs: 0, protein: 0, fat: 0 }
+  );
+}
+
+function averageConfidence(drafts: FoodDraft[]) {
+  if (!drafts.length) return 0.55;
+  return drafts.reduce((sum, draft) => sum + draft.confidence, 0) / drafts.length;
+}
+
+function imageLogLine(drafts: FoodDraft[], note: string, mode: "photo" | "label") {
+  const cleanNote = cleanTitle(note);
+  if (cleanNote) return cleanNote;
+  return readableList(uniqueTitles(drafts)) || (mode === "label" ? "Nutrition label photo" : "Meal photo");
+}
+
+function imageEntryDraft(drafts: FoodDraft[], line: string, imageUri: string, day: string, mode: "photo" | "label"): FoodDraft {
+  const titles = uniqueTitles(drafts);
+  const title = readableList(titles) || line;
+  const source = drafts[0]?.source ?? (mode === "label" ? "label_ocr" : "ai_photo");
+
+  if (drafts.length === 1) {
+    const draft = drafts[0]!;
+    return {
+      ...draft,
+      rawInput: line,
+      title: cleanTitle(draft.title) || title,
+      imageUri
+    };
+  }
+
+  return {
+    id: createId("draft_image"),
+    day,
+    rawInput: line,
+    title,
+    servingLabel: `${drafts.length || 1} photo items`,
+    macros: sumMacros(drafts),
+    source,
+    confidence: averageConfidence(drafts),
+    sourceLabel: drafts[0]?.sourceLabel ?? (mode === "label" ? "Label estimate" : "Amy estimate"),
+    imageUri,
+    createdAt: new Date().toISOString()
+  };
+}
 
 export function CaptureModal({
   mode,
@@ -22,12 +101,13 @@ export function CaptureModal({
   focusTypeInput: () => void;
   prefillBarcode?: string;
 }) {
-  const { data, selectedDay, addEntryFromDraft, appendDayNoteLine } = useAppData();
+  const { data, selectedDay, addEntryFromDraft } = useAppData();
   const [permission, requestPermission] = useCameraPermissions();
   const [busy, setBusy] = useState(false);
   const [caption, setCaption] = useState("");
   const [notice, setNotice] = useState("");
   const [torchOn, setTorchOn] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
   const cameraRef = useRef<CameraView | null>(null);
   const lastPrefillLookupRef = useRef("");
   const barcodeLookupInFlightRef = useRef(false);
@@ -36,6 +116,10 @@ export function CaptureModal({
   const needsCamera = mode === "barcode" || mode === "photo" || mode === "label";
   const canUseCamera = Platform.OS !== "web" && needsCamera;
   const cameraHeight = Math.round(Math.max(mode === "barcode" ? 356 : 386, Math.min(mode === "barcode" ? 430 : 460, height * 0.54)));
+
+  useEffect(() => {
+    setCameraReady(false);
+  }, [mode]);
 
   const lookupBarcode = async (code: string) => {
     if (barcodeLookupInFlightRef.current) return;
@@ -50,7 +134,6 @@ export function CaptureModal({
       const result = await lookupOpenFoodFactsProduct(cleanCode, selectedDay);
       if (result.status === "found") {
         addEntryFromDraft(result.draft, result.draft.title);
-        appendDayNoteLine(selectedDay, result.draft.title);
         setNotice("Open Food Facts logged.");
         onDone();
       } else {
@@ -78,22 +161,23 @@ export function CaptureModal({
     try {
       setBusy(true);
       const note = caption.trim();
+      const locationContext = data?.settings.locationForRestaurants ? await getLocationContext() : {};
       const estimate = await estimateMealImage({
         imageUri,
         day: selectedDay,
         mode: mode === "label" ? "label" : "photo",
         caption: note,
         context: {
+          calorieBias: data?.settings.calorieBias,
+          locationLabel: locationContext.label,
           openRouterKey: data?.settings.openRouterKey,
           openRouterModel: data?.settings.openRouterModel
         }
       });
-      estimate.drafts.forEach((draft) => {
-        const rawInput = note || draft.rawInput || draft.title;
-        addEntryFromDraft(draft, rawInput);
-        appendDayNoteLine(selectedDay, rawInput);
-      });
-      setNotice(estimate.error ?? estimate.notice ?? "Image logged.");
+      const line = imageLogLine(estimate.drafts, note, mode === "label" ? "label" : "photo");
+      const draft = imageEntryDraft(estimate.drafts, line, imageUri, selectedDay, mode === "label" ? "label" : "photo");
+      addEntryFromDraft(draft, line);
+      setNotice(locationContext.error ?? estimate.error ?? estimate.notice ?? "Image logged.");
       onDone();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not analyze this image.");
@@ -108,28 +192,40 @@ export function CaptureModal({
       setNotice("Camera is not ready yet.");
       return;
     }
-    const photo = await cameraRef.current.takePictureAsync({ quality: 0.82 });
-    if (!photo?.uri) {
-      setNotice("No image was captured.");
+    if (!cameraReady) {
+      setNotice("Camera is still starting.");
       return;
     }
-    await analyzeImageUri(photo.uri);
+    try {
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.82 });
+      if (!photo?.uri) {
+        setNotice("No image was captured.");
+        return;
+      }
+      await analyzeImageUri(photo.uri);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not capture this image.");
+    }
   };
 
   const pickImage = async () => {
     if (busy) return;
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      setNotice("Gallery permission is needed to choose a food photo.");
-      return;
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        setNotice("Gallery permission is needed to choose a food photo.");
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        quality: 0.82,
+        allowsEditing: false
+      });
+      const asset = result.assets?.[0];
+      if (!result.canceled && asset?.uri) await analyzeImageUri(asset.uri);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not choose this image.");
     }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      quality: 0.82,
-      allowsEditing: false
-    });
-    const asset = result.assets?.[0];
-    if (!result.canceled && asset?.uri) await analyzeImageUri(asset.uri);
   };
 
   if (mode === "type") {
@@ -189,6 +285,8 @@ export function CaptureModal({
               style={[styles.camera, { height: cameraHeight }]}
               facing="back"
               enableTorch={torchOn}
+              onCameraReady={() => setCameraReady(true)}
+              onMountError={(event) => setNotice(event.message || "Camera could not start.")}
               barcodeScannerSettings={mode === "barcode" ? { barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "code128"] } : undefined}
               onBarcodeScanned={mode === "barcode" && !busy ? handleBarcode : undefined}
             />
@@ -216,7 +314,7 @@ export function CaptureModal({
               </View>
             ) : (
               <View style={styles.barcodeHint} pointerEvents="none">
-                <ScanBarcode size={24} color={colors.ink} />
+                <Barcode size={24} color={colors.ink} />
                 <Text style={styles.barcodeHintText}>Align barcode inside the frame</Text>
               </View>
             )}

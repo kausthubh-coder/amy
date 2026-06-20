@@ -18,6 +18,7 @@ export type FoodEntry = {
   confidence: number;
   sourceLabel?: string;
   barcode?: string;
+  imageUri?: string;
   createdAt: string;
   updatedAt: string;
 };

@@ -13,14 +13,17 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   UIManager,
   View
 } from "react-native";
-import { Camera, Flame, Mic, Plus, ScanBarcode, Settings } from "lucide-react-native";
+import type { NativeSyntheticEvent, TextLayoutEventData } from "react-native";
+import { Barcode, Camera, Flame, Mic, Plus, Settings } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { InteractivePressable } from "../components/InteractivePressable";
 import { ModalShell } from "../components/ModalShell";
+import { MacroRing, ProgressBar } from "../components/NutritionBits";
 import { targetsFromCalories, totalsForDay } from "../domain/nutrition";
 import { createId } from "../domain/seed";
 import { FoodDraft, FoodEntry, MacroTotals } from "../domain/types";
@@ -59,6 +62,9 @@ const phaseText: Record<LinePhase, string> = {
 };
 
 const animatedNativeDriver = Platform.OS !== "web";
+const NOTE_LINE_HEIGHT = 32;
+const LINE_RAIL_WIDTH = 116;
+const NOTE_INPUT_RIGHT_PADDING = LINE_RAIL_WIDTH + 8;
 
 if (Platform.OS === "android") {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
@@ -126,6 +132,10 @@ function countLineNorms(text: string) {
     counts.set(norm, (counts.get(norm) ?? 0) + 1);
   });
   return counts;
+}
+
+function measuredLineHeight(lineCount: number) {
+  return Math.max(NOTE_LINE_HEIGHT, Math.ceil(lineCount) * NOTE_LINE_HEIGHT);
 }
 
 function totalMacros(drafts: FoodDraft[]): MacroTotals {
@@ -318,6 +328,8 @@ export function TodayScreen({
   const [inputFocused, setInputFocused] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [calorieOverlayVisible, setCalorieOverlayVisible] = useState(false);
+  const [lineHeights, setLineHeights] = useState<Record<string, number>>({});
   const inputRef = useRef<TextInput>(null);
   const lastPrefillRef = useRef("");
   const lastDictationSignalRef = useRef(0);
@@ -336,6 +348,7 @@ export function TodayScreen({
   const pruningRef = useRef(new Set<string>());
   const externalNoteRef = useRef("");
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
 
   const note = data?.dayNotes.find((item) => item.day === selectedDay)?.text ?? "";
   const entries = useMemo(() => data?.entries.filter((entry) => entry.day === selectedDay) ?? [], [data?.entries, selectedDay]);
@@ -343,8 +356,9 @@ export function TodayScreen({
   const loggedDayCount = useMemo(() => new Set((data?.entries ?? []).map((entry) => entry.day)).size, [data?.entries]);
   const lineRows = useMemo(() => buildLineRows(workingText, entries, lineStatuses), [entries, lineStatuses, workingText]);
   const editingEntry = useMemo(() => entries.find((entry) => entry.id === editingEntryId), [editingEntryId, entries]);
-  const dockBottom = keyboardOpen ? 10 : Math.max(insets.bottom + 10, 18);
+  const dockBottom = keyboardOpen && Platform.OS === "ios" ? 10 : Math.max(insets.bottom + 10, 18);
   const dockReserve = dockBottom + 78;
+  const measuredTextWidth = Math.max(80, windowWidth - 36 - NOTE_INPUT_RIGHT_PADDING);
 
   useEffect(() => {
     workingTextRef.current = workingText;
@@ -366,8 +380,10 @@ export function TodayScreen({
     externalNoteRef.current = note;
     setWorkingText(note);
     setLineStatuses({});
+    setLineHeights({});
     setNotice("");
     setEditingEntryId(null);
+    setCalorieOverlayVisible(false);
   }, [selectedDay]);
 
   useEffect(() => {
@@ -384,7 +400,16 @@ export function TodayScreen({
       const next = Object.fromEntries(Object.entries(current).filter(([key]) => activeKeys.has(key)));
       return Object.keys(next).length === Object.keys(current).length ? current : next;
     });
+    setLineHeights((current) => {
+      const next = Object.fromEntries(Object.entries(current).filter(([key]) => activeKeys.has(key)));
+      return Object.keys(next).length === Object.keys(current).length ? current : next;
+    });
   }, [workingText]);
+
+  const rememberLineHeight = useCallback((key: string, event: NativeSyntheticEvent<TextLayoutEventData>) => {
+    const nextHeight = measuredLineHeight(event.nativeEvent.lines.length || 1);
+    setLineHeights((current) => (current[key] === nextHeight ? current : { ...current, [key]: nextHeight }));
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -512,6 +537,10 @@ export function TodayScreen({
       hide.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (keyboardOpen) setCalorieOverlayVisible(false);
+  }, [keyboardOpen]);
 
   useSpeechRecognitionEvent("start", () => {
     if (!dictationRequestedRef.current) {
@@ -663,6 +692,7 @@ export function TodayScreen({
     pruneDeletedLineEntries(value);
     setWorkingText(value);
     if (notice) setNotice("");
+    if (calorieOverlayVisible) setCalorieOverlayVisible(false);
   };
 
   const replaceLineForEntry = (entry: FoodEntry, replacement: string | null) => {
@@ -702,9 +732,11 @@ export function TodayScreen({
 
   if (!data) return null;
 
+  const calorieProgress = data.goal.dailyCalories > 0 ? totals.calories / data.goal.dailyCalories : 0;
+
   return (
     <KeyboardAvoidingView
-	      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
 	      style={[styles.screen, { paddingTop: Math.max(insets.top + 10, 24) }]}
       onTouchStart={rememberTouchStart}
       onTouchEnd={finishTouchSwipe}
@@ -748,13 +780,26 @@ export function TodayScreen({
             style={styles.noteInput}
           />
 
+          <View pointerEvents="none" style={styles.measureLayer}>
+            {lineRows.map((row) => (
+              <Text
+                key={`measure-${row.key}`}
+                onTextLayout={(event) => rememberLineHeight(row.key, event)}
+                style={[styles.measureText, { width: measuredTextWidth }]}
+              >
+                {row.text || " "}
+              </Text>
+            ))}
+          </View>
+
           <View style={styles.lineRail}>
             {lineRows.map((row) => {
               const activePhase = row.status?.phase && row.status.phase !== "done" ? row.status.phase : undefined;
               const label = activePhase ? phaseText[activePhase] : row.entry ? `${row.entry.macros.calories.toLocaleString()} cal` : "";
               const canEdit = Boolean(row.entry);
+              const rowHeight = lineHeights[row.key] ?? NOTE_LINE_HEIGHT;
               return (
-                <View key={row.key} style={styles.lineRailSlot}>
+                <View key={row.key} style={[styles.lineRailSlot, { height: rowHeight }]}>
                   {canEdit ? (
                     <InteractivePressable
                       feedbackKind="edit"
@@ -782,11 +827,39 @@ export function TodayScreen({
 	        </ScrollView>
 	      </View>
 
+      {calorieOverlayVisible ? (
+        <View style={[styles.calorieOverlay, { bottom: dockBottom + 66 }]}>
+          <Text style={styles.overlayTitle}>Goals</Text>
+          <View style={styles.overlayCalorieRow}>
+            <View style={styles.overlayCalorieLabel}>
+              <Text style={styles.overlayCalorieEmoji}>🔥</Text>
+              <Text style={styles.overlayCalorieText}>Calories</Text>
+            </View>
+            <Text style={styles.overlayCalorieValue}>
+              {totals.calories.toLocaleString()} / {data.goal.dailyCalories.toLocaleString()}
+            </Text>
+          </View>
+          <ProgressBar value={calorieProgress} />
+          <View style={styles.overlayRings}>
+            <MacroRing label="Carbs" value={totals.carbs} target={data.goal.carbsTarget} color={colors.green} />
+            <MacroRing label="Protein" value={totals.protein} target={data.goal.proteinTarget} color={colors.pink} />
+            <MacroRing label="Fat" value={totals.fat} target={data.goal.fatTarget} color={colors.green} />
+          </View>
+        </View>
+      ) : null}
+
 	        <View style={[styles.dock, { bottom: dockBottom }]}>
-	          <View style={styles.caloriePill}>
-	            <Flame size={20} color={colors.orange} fill={colors.orange} strokeWidth={2.2} />
+	          <InteractivePressable
+              accessibilityLabel={calorieOverlayVisible ? "Hide calorie details" : "Show calorie details"}
+              onPress={() => {
+                Keyboard.dismiss();
+                setCalorieOverlayVisible((visible) => !visible);
+              }}
+              style={[styles.caloriePill, calorieOverlayVisible && styles.caloriePillActive]}
+            >
+	            <Text style={styles.calorieEmoji}>🔥</Text>
 	            <Text style={styles.caloriePillText}>{totals.calories.toLocaleString()}</Text>
-	          </View>
+	          </InteractivePressable>
           <InteractivePressable onPress={toggleDictation} style={[styles.roundButton, listening && styles.roundButtonOn]}>
             <Mic size={24} color={listening ? colors.ink : colors.blue} strokeWidth={2.6} />
           </InteractivePressable>
@@ -797,7 +870,7 @@ export function TodayScreen({
             <Plus size={26} color={colors.orange} strokeWidth={2.8} />
           </InteractivePressable>
 	          <InteractivePressable onPress={() => openModal("capture", "barcode")} style={styles.roundButton}>
-	            <ScanBarcode size={24} color={colors.ink} strokeWidth={2.4} />
+	            <Barcode size={24} color={colors.ink} strokeWidth={2.4} />
 	          </InteractivePressable>
         </View>
 
@@ -891,33 +964,46 @@ const styles = StyleSheet.create({
   noteInput: {
     color: colors.ink,
     fontSize: 24,
-    lineHeight: 32,
+    lineHeight: NOTE_LINE_HEIGHT,
     fontWeight: "500",
     padding: 0,
-    paddingRight: 116,
+    paddingRight: NOTE_INPUT_RIGHT_PADDING,
     textAlignVertical: "top"
+  },
+  measureLayer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    opacity: 0
+  },
+  measureText: {
+    color: colors.ink,
+    fontSize: 24,
+    lineHeight: NOTE_LINE_HEIGHT,
+    fontWeight: "500",
+    padding: 0
   },
   lineRail: {
     position: "absolute",
-    top: 1,
+    top: 0,
     right: 0,
-    width: 112,
+    width: LINE_RAIL_WIDTH,
     alignItems: "flex-end"
   },
   lineRailSlot: {
-    height: 32,
     alignItems: "flex-end",
-    justifyContent: "center"
+    justifyContent: "flex-start"
   },
   lineCalorieHit: {
     minWidth: 86,
-    minHeight: 34,
+    minHeight: NOTE_LINE_HEIGHT,
     alignItems: "flex-end",
     justifyContent: "center"
   },
   sideCalories: {
     color: colors.dim,
     fontSize: 24,
+    lineHeight: NOTE_LINE_HEIGHT,
     fontWeight: "800"
   },
   phasePill: {
@@ -975,10 +1061,71 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.line
   },
+  caloriePillActive: {
+    backgroundColor: colors.panel2,
+    borderColor: colors.green
+  },
   caloriePillText: {
     color: colors.ink,
     fontSize: 19,
     fontWeight: "900"
+  },
+  calorieEmoji: {
+    fontSize: 20,
+    lineHeight: 24
+  },
+  calorieOverlay: {
+    position: "absolute",
+    left: 18,
+    right: 18,
+    zIndex: 12,
+    borderRadius: 34,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.18)",
+    backgroundColor: "rgba(32, 32, 34, 0.9)",
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 20,
+    gap: 14,
+    elevation: 16
+  },
+  overlayTitle: {
+    color: colors.ink,
+    fontSize: 22,
+    fontWeight: "900"
+  },
+  overlayCalorieRow: {
+    minHeight: 30,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 14
+  },
+  overlayCalorieLabel: {
+    minWidth: 0,
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8
+  },
+  overlayCalorieText: {
+    color: colors.ink,
+    fontSize: 19,
+    fontWeight: "900"
+  },
+  overlayCalorieEmoji: {
+    fontSize: 21,
+    lineHeight: 24
+  },
+  overlayCalorieValue: {
+    color: colors.ink,
+    fontSize: 18,
+    fontWeight: "900"
+  },
+  overlayRings: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    paddingTop: 4
   },
   roundButton: {
     width: 48,

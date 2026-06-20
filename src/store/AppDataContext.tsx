@@ -85,7 +85,9 @@ function draftKey(draft: FoodDraft) {
 
 function cleanSourceLabel(source: FoodDraft["source"], label?: string) {
   let sourceLabel = label;
-  if (source === "ai_text") {
+  if (source !== "open_food_facts" && /open food facts/i.test(sourceLabel ?? "")) {
+    sourceLabel = source === "label_ocr" ? "Label estimate" : "Amy estimate";
+  } else if (source === "ai_text") {
     sourceLabel = /menu|restaurant|chick-fil-a|mcdonald|taco bell|starbucks|chipotle/i.test(sourceLabel ?? "")
       ? "Restaurant estimate"
       : "Amy estimate";
@@ -117,6 +119,7 @@ function entryFromDraft(draft: FoodDraft, rawInput = draft.rawInput): FoodEntry 
     confidence: draft.confidence,
     sourceLabel: draft.sourceLabel,
     barcode: draft.barcode,
+    imageUri: draft.imageUri,
     createdAt: nowIso(),
     updatedAt: nowIso()
   });

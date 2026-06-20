@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Linking, StatusBar, StyleSheet, Text, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { Camera, ScanBarcode, Tags } from "lucide-react-native";
+import { Barcode, Camera, Tags } from "lucide-react-native";
 
 import { ModalShell } from "./src/components/ModalShell";
 import { LocalDataProvider, useAppData } from "./src/store/AppDataContext";
@@ -56,7 +56,7 @@ function AppBody() {
   const captureTitle = captureMode === "barcode" ? "Scan barcode" : captureMode === "label" ? "Capture label" : "Capture meal";
   const captureTitleIcon =
     captureMode === "barcode" ? (
-      <ScanBarcode size={28} color={colors.orange} strokeWidth={2.5} />
+      <Barcode size={28} color={colors.orange} strokeWidth={2.5} />
     ) : captureMode === "label" ? (
       <Tags size={28} color={colors.pink} strokeWidth={2.5} />
     ) : (
