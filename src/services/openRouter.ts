@@ -41,6 +41,9 @@ function text(value: unknown, fallback: string): string {
 
 function cleanSourceLabel(value: unknown, source: FoodSource): string {
   const candidate = text(value, source === "open_food_facts" ? "Open Food Facts" : "Amy estimate");
+  if (source !== "open_food_facts" && /open food facts/i.test(candidate)) {
+    return source === "label_ocr" ? "Label estimate" : "Amy estimate";
+  }
   if (source === "ai_text") {
     if (/menu|restaurant|chick-fil-a|mcdonald|taco bell|starbucks|chipotle/i.test(candidate)) return "Restaurant estimate";
     return "Amy estimate";
@@ -139,9 +142,11 @@ function uniqueDrafts(drafts: FoodDraft[]): FoodDraft[] {
 
 const systemPrompt = [
   "You are Amy, a calorie tracking parser. Convert the user's meal note into nutrition items.",
-  "Use current common nutrition knowledge and web search when available for restaurants or branded meals.",
+  "Use current common nutrition knowledge and any rough location context provided for restaurant guesses.",
   "Open Food Facts is the only product database this app uses for barcode products; do not cite FatSecret, USDA, or another nutrition database as the product lookup source.",
   "Use sourceLabel values like Amy estimate or Restaurant estimate for text/photo estimates; use Open Food Facts only for barcode product matches.",
+  "For photo estimates, identify visible foods with short editable titles. Never use a local file name, URI, or generic 'image' label as the food title.",
+  "When portions are uncertain, choose a practical serving estimate, include visible sauces/oils/sides, and lower confidence instead of undercounting.",
   "Return only JSON with this shape:",
   '{"items":[{"title":"string","servingLabel":"string","calories":number,"carbs":number,"protein":number,"fat":number,"confidence":number,"sourceLabel":"string"}]}',
   "Prefer realistic calories over overly optimistic numbers. Include sauce, drinks, and sides when mentioned.",
@@ -174,6 +179,14 @@ const foodItemsSchema = {
 
 function buildUserContent(prompt: string, context?: EstimateContext) {
   const lines = [prompt.trim()];
+  if (context?.locationLabel) lines.push(`Rough location context for restaurant guesses: ${context.locationLabel}.`);
+  if (context?.calorieBias && context.calorieBias !== "balanced") lines.push(`User calorie bias preference: ${context.calorieBias}.`);
+  return lines.join("\n");
+}
+
+function buildImageUserText(prompt: string, caption?: string, context?: EstimateContext) {
+  const lines = [prompt.trim()];
+  if (caption?.trim()) lines.push(`User note: ${caption.trim()}`);
   if (context?.locationLabel) lines.push(`Rough location context for restaurant guesses: ${context.locationLabel}.`);
   if (context?.calorieBias && context.calorieBias !== "balanced") lines.push(`User calorie bias preference: ${context.calorieBias}.`);
   return lines.join("\n");
@@ -271,8 +284,8 @@ export async function estimateMealImage({
     const dataUrl = await imageUriToDataUrl(imageUri);
     const prompt =
       mode === "label"
-        ? "Read this nutrition label. Return calories and macros for one normal serving."
-        : "Estimate calories and macros for the visible meal. Be practical and conservative.";
+        ? "Read this nutrition label. Return calories and macros for one normal serving. Use a short editable food title."
+        : "Estimate calories and macros for the visible meal. Be practical and conservative. Use short editable food titles for the visible foods.";
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -289,7 +302,7 @@ export async function estimateMealImage({
           {
             role: "user",
             content: [
-              { type: "text", text: caption ? `${prompt}\nUser note: ${caption}` : prompt },
+              { type: "text", text: buildImageUserText(prompt, caption, context) },
               { type: "image_url", image_url: { url: dataUrl } }
             ]
           }
@@ -308,7 +321,12 @@ export async function estimateMealImage({
     const modelPayload = parseModelJson(content);
     const items = Array.isArray(modelPayload.items) ? modelPayload.items : [];
     const drafts = items
-      .map((item, index) => (typeof item === "object" && item ? itemToDraft(item as AiItem, day, caption || imageUri, index, source) : null))
+      .map((item, index) => {
+        if (typeof item !== "object" || !item) return null;
+        const aiItem = item as AiItem;
+        const rawInput = caption?.trim() || text(aiItem.title ?? aiItem.name, mode === "label" ? "Nutrition label photo" : "Meal photo");
+        return itemToDraft(aiItem, day, rawInput, index, source);
+      })
       .filter((draft): draft is FoodDraft => Boolean(draft))
       .map((draft) => ({ ...draft, imageUri }));
 
