@@ -25,9 +25,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { InteractivePressable } from "../components/InteractivePressable";
 import { ModalShell } from "../components/ModalShell";
 import { MacroRing, ProgressBar } from "../components/NutritionBits";
-import { targetsFromCalories, totalsForDay } from "../domain/nutrition";
+import { formatPortionLabel, macrosForPortion, portionGrams, targetsFromCalories, totalsForDay } from "../domain/nutrition";
 import { createId } from "../domain/seed";
-import { FoodDraft, FoodEntry, MacroTotals } from "../domain/types";
+import { FoodDraft, FoodEntry, FoodPortion, MacroTotals, PortionUnit } from "../domain/types";
 import { feedback } from "../services/feedback";
 import { getLocationContext } from "../services/location";
 import { estimateMealText } from "../services/openRouter";
@@ -192,6 +192,30 @@ function numeric(value: string, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function inputAmount(value: string): number | undefined {
+  const parsed = Number(value.replace(/,/g, ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function formatInputAmount(value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value)) return "";
+  return Number(value.toFixed(2)).toString();
+}
+
+function servingAmountForPortion(portion: FoodPortion): number | undefined {
+  if (portion.unit === "serving") return portion.amount;
+  if (portion.servingGrams) return portion.amount / portion.servingGrams;
+  return undefined;
+}
+
+function canEditServingAmount(portion: FoodPortion) {
+  return portion.baseUnit === "serving" || Boolean(portion.servingGrams);
+}
+
+function canEditGramAmount(portion: FoodPortion) {
+  return portion.baseUnit === "g" || Boolean(portion.servingGrams);
+}
+
 function PhaseIndicator({ phase }: { phase: LinePhase }) {
   const [dotCount, setDotCount] = useState(1);
   const opacity = useRef(new Animated.Value(0.65)).current;
@@ -237,18 +261,96 @@ function FoodEditModal({
   const [carbs, setCarbs] = useState("");
   const [protein, setProtein] = useState("");
   const [fat, setFat] = useState("");
+  const [portionServings, setPortionServings] = useState("");
+  const [portionGramAmount, setPortionGramAmount] = useState("");
+  const [activePortionUnit, setActivePortionUnit] = useState<PortionUnit>("serving");
+
+  const setMacroInputs = (macros: MacroTotals) => {
+    setCalories(String(macros.calories));
+    setCarbs(String(macros.carbs));
+    setProtein(String(macros.protein));
+    setFat(String(macros.fat));
+  };
 
   useEffect(() => {
     if (!entry) return;
     setTitle(entry.title);
     setServingLabel(entry.servingLabel);
-    setCalories(String(entry.macros.calories));
-    setCarbs(String(entry.macros.carbs));
-    setProtein(String(entry.macros.protein));
-    setFat(String(entry.macros.fat));
+    setMacroInputs(entry.macros);
+    if (entry.portion) {
+      setActivePortionUnit(entry.portion.unit);
+      setPortionServings(formatInputAmount(servingAmountForPortion(entry.portion)));
+      setPortionGramAmount(formatInputAmount(portionGrams(entry.portion)));
+    } else {
+      setActivePortionUnit("serving");
+      setPortionServings("");
+      setPortionGramAmount("");
+    }
   }, [entry]);
 
-  const target = entry ? targetsFromCalories(entry.macros.calories) : targetsFromCalories(0);
+  const target = targetsFromCalories(Math.max(0, Math.round(numeric(calories, entry?.macros.calories ?? 0))));
+  const canUseServings = entry?.portion ? canEditServingAmount(entry.portion) : false;
+  const canUseGrams = entry?.portion ? canEditGramAmount(entry.portion) : false;
+  const nutritionEditable = !entry?.portion;
+
+  const syncPortion = (unit: PortionUnit, rawValue: string) => {
+    if (!entry?.portion) return;
+    const amount = inputAmount(rawValue);
+    if (amount === undefined) return;
+    setMacroInputs(macrosForPortion({ ...entry.portion, amount, unit }));
+  };
+
+  const changePortionServings = (value: string) => {
+    setActivePortionUnit("serving");
+    setPortionServings(value);
+    const amount = inputAmount(value);
+    if (amount !== undefined && entry?.portion?.servingGrams) {
+      setPortionGramAmount(formatInputAmount(amount * entry.portion.servingGrams));
+    }
+    syncPortion("serving", value);
+  };
+
+  const changePortionGrams = (value: string) => {
+    setActivePortionUnit("g");
+    setPortionGramAmount(value);
+    const amount = inputAmount(value);
+    if (amount !== undefined && entry?.portion?.servingGrams) {
+      setPortionServings(formatInputAmount(amount / entry.portion.servingGrams));
+    }
+    syncPortion("g", value);
+  };
+
+  const buildPortionPatch = (): FoodPortion | undefined => {
+    if (!entry?.portion) return undefined;
+    const unit = activePortionUnit === "g" && canUseGrams ? "g" : "serving";
+    const fallback =
+      unit === "g" ? (portionGrams(entry.portion) ?? entry.portion.amount) : (servingAmountForPortion(entry.portion) ?? entry.portion.amount);
+    return {
+      ...entry.portion,
+      amount: inputAmount(unit === "g" ? portionGramAmount : portionServings) ?? fallback,
+      unit
+    };
+  };
+
+  const handleSave = () => {
+    if (!entry) return;
+    const nextPortion = buildPortionPatch();
+    const nextMacros = nextPortion
+      ? macrosForPortion(nextPortion)
+      : {
+          calories: Math.max(0, Math.round(numeric(calories, entry.macros.calories))),
+          carbs: Math.max(0, Math.round(numeric(carbs, entry.macros.carbs) * 10) / 10),
+          protein: Math.max(0, Math.round(numeric(protein, entry.macros.protein) * 10) / 10),
+          fat: Math.max(0, Math.round(numeric(fat, entry.macros.fat) * 10) / 10)
+        };
+    const patch: Partial<FoodEntry> = {
+      title: title.trim() || entry.title,
+      servingLabel: nextPortion ? formatPortionLabel(nextPortion) : servingLabel.trim() || entry.servingLabel,
+      macros: nextMacros
+    };
+    if (nextPortion) patch.portion = nextPortion;
+    onSave(entry, patch);
+  };
 
   return (
     <ModalShell visible={Boolean(entry)} title="Edit Food" onClose={onClose}>
@@ -257,22 +359,91 @@ function FoodEditModal({
           <View style={styles.editCard}>
             <Text style={styles.editLabel}>Food</Text>
             <TextInput value={title} onChangeText={setTitle} placeholder="Food name" placeholderTextColor={colors.dim} style={styles.editInput} />
-            <TextInput
-              value={servingLabel}
-              onChangeText={setServingLabel}
-              placeholder="Serving size"
-              placeholderTextColor={colors.dim}
-              style={styles.editInput}
-            />
+            {entry.portion ? null : (
+              <TextInput
+                value={servingLabel}
+                onChangeText={setServingLabel}
+                placeholder="Serving size"
+                placeholderTextColor={colors.dim}
+                style={styles.editInput}
+              />
+            )}
           </View>
 
+          {entry.portion ? (
+            <View style={styles.editCard}>
+              <Text style={styles.editLabel}>Portion</Text>
+              <View style={styles.portionInputs}>
+                <View style={styles.portionField}>
+                  <Text style={styles.portionLabel}>Servings</Text>
+                  <TextInput
+                    value={portionServings}
+                    onChangeText={changePortionServings}
+                    editable={canUseServings}
+                    keyboardType="decimal-pad"
+                    placeholder="1"
+                    placeholderTextColor={colors.dim}
+                    style={[styles.portionInput, !canUseServings && styles.portionInputDisabled]}
+                  />
+                </View>
+                <View style={styles.portionField}>
+                  <Text style={styles.portionLabel}>Grams</Text>
+                  <TextInput
+                    value={portionGramAmount}
+                    onChangeText={changePortionGrams}
+                    editable={canUseGrams}
+                    keyboardType="decimal-pad"
+                    placeholder="g"
+                    placeholderTextColor={colors.dim}
+                    style={[styles.portionInput, !canUseGrams && styles.portionInputDisabled]}
+                  />
+                </View>
+              </View>
+              <Text style={styles.editHint}>
+                Base {entry.portion.servingLabel} - {entry.portion.baseMacros.calories.toLocaleString()} cal
+              </Text>
+            </View>
+          ) : null}
+
           <View style={styles.editCard}>
-            <Text style={styles.editLabel}>Nutrition</Text>
-            <TextInput value={calories} onChangeText={setCalories} keyboardType="number-pad" placeholder="Calories" placeholderTextColor={colors.dim} style={styles.editInput} />
+            <Text style={styles.editLabel}>Nutrition total</Text>
+            <TextInput
+              value={calories}
+              onChangeText={setCalories}
+              editable={nutritionEditable}
+              keyboardType="number-pad"
+              placeholder="Calories"
+              placeholderTextColor={colors.dim}
+              style={[styles.editInput, !nutritionEditable && styles.readOnlyInput]}
+            />
             <View style={styles.macroInputs}>
-              <TextInput value={carbs} onChangeText={setCarbs} keyboardType="decimal-pad" placeholder="Carbs" placeholderTextColor={colors.dim} style={styles.macroInput} />
-              <TextInput value={protein} onChangeText={setProtein} keyboardType="decimal-pad" placeholder="Protein" placeholderTextColor={colors.dim} style={styles.macroInput} />
-              <TextInput value={fat} onChangeText={setFat} keyboardType="decimal-pad" placeholder="Fat" placeholderTextColor={colors.dim} style={styles.macroInput} />
+              <TextInput
+                value={carbs}
+                onChangeText={setCarbs}
+                editable={nutritionEditable}
+                keyboardType="decimal-pad"
+                placeholder="Carbs"
+                placeholderTextColor={colors.dim}
+                style={[styles.macroInput, !nutritionEditable && styles.readOnlyInput]}
+              />
+              <TextInput
+                value={protein}
+                onChangeText={setProtein}
+                editable={nutritionEditable}
+                keyboardType="decimal-pad"
+                placeholder="Protein"
+                placeholderTextColor={colors.dim}
+                style={[styles.macroInput, !nutritionEditable && styles.readOnlyInput]}
+              />
+              <TextInput
+                value={fat}
+                onChangeText={setFat}
+                editable={nutritionEditable}
+                keyboardType="decimal-pad"
+                placeholder="Fat"
+                placeholderTextColor={colors.dim}
+                style={[styles.macroInput, !nutritionEditable && styles.readOnlyInput]}
+              />
             </View>
             <Text style={styles.editHint}>Target shape from this calorie value: C {target.carbsTarget} · P {target.proteinTarget} · F {target.fatTarget}</Text>
           </View>
@@ -287,18 +458,7 @@ function FoodEditModal({
             </InteractivePressable>
             <InteractivePressable
               feedbackKind="edit"
-              onPress={() =>
-                onSave(entry, {
-                  title: title.trim() || entry.title,
-                  servingLabel: servingLabel.trim() || entry.servingLabel,
-                  macros: {
-                    calories: Math.max(0, Math.round(numeric(calories, entry.macros.calories))),
-                    carbs: Math.max(0, Math.round(numeric(carbs, entry.macros.carbs) * 10) / 10),
-                    protein: Math.max(0, Math.round(numeric(protein, entry.macros.protein) * 10) / 10),
-                    fat: Math.max(0, Math.round(numeric(fat, entry.macros.fat) * 10) / 10)
-                  }
-                })
-              }
+              onPress={handleSave}
               style={[styles.editButton, styles.saveButton]}
             >
               <Text style={styles.saveText}>Save</Text>
@@ -1175,6 +1335,34 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "800",
     paddingHorizontal: 14
+  },
+  portionInputs: {
+    flexDirection: "row",
+    gap: 10
+  },
+  portionField: {
+    flex: 1,
+    gap: 6
+  },
+  portionLabel: {
+    color: colors.dim,
+    fontSize: 12,
+    fontWeight: "900"
+  },
+  portionInput: {
+    minHeight: 54,
+    borderRadius: 17,
+    backgroundColor: colors.panel2,
+    color: colors.ink,
+    fontSize: 18,
+    fontWeight: "900",
+    paddingHorizontal: 12
+  },
+  portionInputDisabled: {
+    opacity: 0.45
+  },
+  readOnlyInput: {
+    opacity: 0.72
   },
   macroInputs: {
     flexDirection: "row",
