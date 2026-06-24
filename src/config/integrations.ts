@@ -1,7 +1,9 @@
 export const integrationConfig = {
   openRouter: {
     webSearchEnabled: true,
-    defaultModel: "google/gemini-3.5-flash"
+    defaultModel: "google/gemini-3.1-flash-lite",
+    defaultVisionModel: "google/gemini-3.1-flash-lite",
+    fallbackVisionModel: "google/gemini-3-flash-preview"
   },
   openFoodFacts: {
     baseUrl: "https://world.openfoodfacts.org",

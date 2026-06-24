@@ -1,15 +1,70 @@
 import React, { useMemo, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
+import Svg, { Circle, Line, Polyline } from "react-native-svg";
 
 import { InteractivePressable } from "../components/InteractivePressable";
 import { totalsForDay } from "../domain/nutrition";
+import { WeightLog } from "../domain/types";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
 import { addDays, dateFromKey, weekRangeLabel } from "../utils/date";
 
+const TREND_WIDTH = 280;
+const TREND_HEIGHT = 132;
+
 function Bar({ value, target, color }: { value: number; target: number; color: string }) {
   const height = Math.max(8, Math.min(128, target ? (value / target) * 128 : 0));
   return <View style={[styles.bar, { height, backgroundColor: color }]} />;
+}
+
+function formatWeight(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function trendSummary(logs: WeightLog[], goal: number) {
+  const sorted = logs
+    .slice()
+    .sort((a, b) => a.day.localeCompare(b.day) || a.createdAt.localeCompare(b.createdAt))
+    .slice(-14);
+  const weights = sorted.map((log) => log.weightLbs);
+
+  if (!sorted.length) {
+    return {
+      logs: sorted,
+      points: "",
+      goalY: TREND_HEIGHT / 2,
+      min: goal - 5,
+      max: goal + 5,
+      delta: 0,
+      current: undefined as WeightLog | undefined,
+      start: undefined as WeightLog | undefined
+    };
+  }
+
+  const rawMin = Math.min(...weights, goal);
+  const rawMax = Math.max(...weights, goal);
+  const min = Math.floor(rawMin - 2);
+  const max = Math.ceil(rawMax + 2);
+  const range = Math.max(1, max - min);
+  const positioned = sorted.map((log, index) => {
+    const x = sorted.length === 1 ? TREND_WIDTH / 2 : (index / (sorted.length - 1)) * TREND_WIDTH;
+    const y = TREND_HEIGHT - ((log.weightLbs - min) / range) * TREND_HEIGHT;
+    return { log, x, y };
+  });
+  const start = sorted[0];
+  const current = sorted[sorted.length - 1];
+
+  return {
+    logs: sorted,
+    points: positioned.map((point) => `${point.x},${point.y}`).join(" "),
+    positioned,
+    goalY: TREND_HEIGHT - ((goal - min) / range) * TREND_HEIGHT,
+    min,
+    max,
+    delta: current && start ? current.weightLbs - start.weightLbs : 0,
+    current,
+    start
+  };
 }
 
 export function StatsModal() {
@@ -19,7 +74,9 @@ export function StatsModal() {
   if (!data) return null;
 
   const activeDays = new Set(data.entries.map((entry) => entry.day));
-  const weightLogs = data.weightLogs.slice(0, 7).reverse();
+  const weightTrend = trendSummary(data.weightLogs, data.goal.weightGoalLbs);
+  const weightDeltaLabel =
+    weightTrend.delta === 0 ? "No change" : `${weightTrend.delta > 0 ? "+" : ""}${formatWeight(weightTrend.delta)} lbs`;
 
   return (
     <View style={styles.stack}>
@@ -62,17 +119,49 @@ export function StatsModal() {
 	          <View style={styles.chartCard}>
 	            <View style={styles.chartHeader}>
 	              <Text style={styles.chartTitle}>Weight</Text>
-	              <Text style={styles.chartAvg}>Goal {data.goal.weightGoalLbs} lbs</Text>
+	              <Text style={styles.chartAvg}>Goal {formatWeight(data.goal.weightGoalLbs)} lbs</Text>
 	            </View>
-	            <View style={styles.weightTrend}>
-	              {weightLogs.map((log) => (
-	                <View key={log.id} style={styles.weightPoint}>
-	                  <Text style={styles.weightValue}>{log.weightLbs}</Text>
-	                  <Text style={styles.dayLabel}>{dateFromKey(log.day).toLocaleDateString(undefined, { month: "numeric", day: "numeric" })}</Text>
-	                </View>
-	              ))}
-	              {!weightLogs.length ? <Text style={styles.empty}>Log weight in Settings to start a trend.</Text> : null}
-	            </View>
+            {weightTrend.current ? (
+              <>
+                <View style={styles.weightStats}>
+                  <View>
+                    <Text style={styles.weightNow}>{formatWeight(weightTrend.current.weightLbs)} lbs</Text>
+                    <Text style={styles.weightCaption}>Current</Text>
+                  </View>
+                  <View style={styles.weightDelta}>
+                    <Text style={[styles.weightDeltaText, weightTrend.delta <= 0 ? styles.weightDeltaDown : styles.weightDeltaUp]}>
+                      {weightDeltaLabel}
+                    </Text>
+                    <Text style={styles.weightCaption}>Last {weightTrend.logs.length}</Text>
+                  </View>
+                </View>
+                <View style={styles.trendFrame}>
+                  <Svg width="100%" height={TREND_HEIGHT} viewBox={`0 0 ${TREND_WIDTH} ${TREND_HEIGHT}`}>
+                    <Line x1="0" y1={weightTrend.goalY} x2={TREND_WIDTH} y2={weightTrend.goalY} stroke={colors.green} strokeWidth="2" strokeDasharray="7 7" />
+                    {weightTrend.points ? (
+                      <Polyline points={weightTrend.points} fill="none" stroke={colors.pink} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+                    ) : null}
+                    {weightTrend.positioned?.map((point) => (
+                      <Circle key={point.log.id} cx={point.x} cy={point.y} r="5.5" fill={colors.ink} stroke={colors.pink} strokeWidth="3" />
+                    ))}
+                  </Svg>
+                  <View style={styles.trendLabels}>
+                    <Text style={styles.dayLabel}>
+                      {weightTrend.start ? dateFromKey(weightTrend.start.day).toLocaleDateString(undefined, { month: "numeric", day: "numeric" }) : ""}
+                    </Text>
+                    <Text style={styles.dayLabel}>
+                      {weightTrend.current ? dateFromKey(weightTrend.current.day).toLocaleDateString(undefined, { month: "numeric", day: "numeric" }) : ""}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.weightRange}>
+                  <Text style={styles.dayLabel}>{formatWeight(weightTrend.max)} lbs</Text>
+                  <Text style={styles.dayLabel}>{formatWeight(weightTrend.min)} lbs</Text>
+                </View>
+              </>
+            ) : (
+              <Text style={styles.empty}>Log weight in Settings to start a trend.</Text>
+            )}
 	          </View>
 	        </>
       ) : (
@@ -178,26 +267,64 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontWeight: "900"
   },
-  weightTrend: {
-    minHeight: 92,
+  weightStats: {
+    minHeight: 58,
     flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "flex-end",
-    gap: 10
-  },
-  weightPoint: {
-    minWidth: 54,
-    borderRadius: 18,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
     alignItems: "center",
-    gap: 6,
-    backgroundColor: colors.panel2
+    justifyContent: "space-between",
+    gap: 14
   },
-  weightValue: {
+  weightNow: {
     color: colors.ink,
-    fontSize: 18,
+    fontSize: 30,
     fontWeight: "900"
+  },
+  weightCaption: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "900"
+  },
+  weightDelta: {
+    minWidth: 104,
+    minHeight: 44,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  weightDeltaText: {
+    color: colors.ink,
+    fontSize: 16,
+    fontWeight: "900"
+  },
+  weightDeltaDown: {
+    color: colors.green
+  },
+  weightDeltaUp: {
+    color: colors.pink
+  },
+  trendFrame: {
+    minHeight: 166,
+    borderRadius: 22,
+    paddingHorizontal: 12,
+    paddingTop: 16,
+    paddingBottom: 10,
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  trendLabels: {
+    minHeight: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  weightRange: {
+    flexDirection: "row",
+    justifyContent: "space-between"
   },
   empty: {
     color: colors.muted,

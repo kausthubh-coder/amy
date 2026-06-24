@@ -26,3 +26,5 @@
 - Document non-free network services clearly: OpenRouter is optional and user-supplied; Open Food Facts is used for barcode/product lookup.
 - Avoid committing generated native folders unless the distribution process specifically requires them.
 - Provide screenshots from `docs/screenshots/`.
+
+See [FOSS distribution and Reddit plan](FOSS_DISTRIBUTION_AND_REDDIT_PLAN.md) for the full F-Droid, OpenAPK, IzzyOnDroid, and Reddit launch sequence.

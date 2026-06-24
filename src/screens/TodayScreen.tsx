@@ -2,6 +2,7 @@ import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-spe
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
+  Dimensions,
   GestureResponderEvent,
   Image,
   Keyboard,
@@ -17,7 +18,7 @@ import {
   UIManager,
   View
 } from "react-native";
-import type { NativeSyntheticEvent, TextLayoutEventData } from "react-native";
+import type { KeyboardEvent, NativeSyntheticEvent, TextLayoutEventData } from "react-native";
 import { Barcode, Camera, Flame, Mic, Plus, Settings } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -327,6 +328,7 @@ export function TodayScreen({
   const [listening, setListening] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [calorieOverlayVisible, setCalorieOverlayVisible] = useState(false);
   const [lineHeights, setLineHeights] = useState<Record<string, number>>({});
@@ -356,7 +358,9 @@ export function TodayScreen({
   const loggedDayCount = useMemo(() => new Set((data?.entries ?? []).map((entry) => entry.day)).size, [data?.entries]);
   const lineRows = useMemo(() => buildLineRows(workingText, entries, lineStatuses), [entries, lineStatuses, workingText]);
   const editingEntry = useMemo(() => entries.find((entry) => entry.id === editingEntryId), [editingEntryId, entries]);
-  const dockBottom = keyboardOpen && Platform.OS === "ios" ? 10 : Math.max(insets.bottom + 10, 18);
+  const keyboardDockOffset =
+    inputFocused && keyboardOpen && keyboardHeight > 0 ? Math.max(keyboardHeight - insets.bottom + 10, 10) : 0;
+  const dockBottom = keyboardDockOffset || Math.max(insets.bottom + 10, 18);
   const dockReserve = dockBottom + 78;
   const measuredTextWidth = Math.max(80, windowWidth - 36 - NOTE_INPUT_RIGHT_PADDING);
 
@@ -530,8 +534,15 @@ export function TodayScreen({
   }, []);
 
   useEffect(() => {
-    const show = Keyboard.addListener("keyboardDidShow", () => setKeyboardOpen(true));
-    const hide = Keyboard.addListener("keyboardDidHide", () => setKeyboardOpen(false));
+    const show = Keyboard.addListener("keyboardDidShow", (event: KeyboardEvent) => {
+      setKeyboardOpen(true);
+      const windowHeight = Dimensions.get("window").height;
+      setKeyboardHeight(Math.max(0, windowHeight - event.endCoordinates.screenY));
+    });
+    const hide = Keyboard.addListener("keyboardDidHide", () => {
+      setKeyboardOpen(false);
+      setKeyboardHeight(0);
+    });
     return () => {
       show.remove();
       hide.remove();

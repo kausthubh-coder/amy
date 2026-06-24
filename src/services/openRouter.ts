@@ -6,7 +6,7 @@ import { FoodDraft, FoodSource, MacroTotals } from "../domain/types";
 import { createId } from "../domain/seed";
 
 type ChatCompletionResponse = {
-  choices?: Array<{ message?: { content?: string } }>;
+  choices?: Array<{ message?: { content?: unknown } }>;
   error?: { message?: string };
 };
 
@@ -24,6 +24,11 @@ type AiItem = {
 
 type AiPayload = {
   items?: unknown;
+};
+
+export type ImageEstimateInput = {
+  uri: string;
+  dataUrl?: string;
 };
 
 function toNumber(value: unknown): number | undefined {
@@ -62,6 +67,21 @@ function parseModelJson(content: string): AiPayload {
     if (start === -1 || end <= start) throw new Error("AI provider returned text instead of JSON.");
     return JSON.parse(trimmed.slice(start, end + 1)) as AiPayload;
   }
+}
+
+function messageContentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (typeof part === "object" && part && "text" in part && typeof part.text === "string") return part.text;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  return "";
 }
 
 type EstimateContext = {
@@ -144,7 +164,7 @@ const systemPrompt = [
   "You are Amy, a calorie tracking parser. Convert the user's meal note into nutrition items.",
   "Use current common nutrition knowledge and any rough location context provided for restaurant guesses.",
   "Open Food Facts is the only product database this app uses for barcode products; do not cite FatSecret, USDA, or another nutrition database as the product lookup source.",
-  "Use sourceLabel values like Amy estimate or Restaurant estimate for text/photo estimates; use Open Food Facts only for barcode product matches.",
+  "Use sourceLabel values like Amy estimate or Restaurant estimate for text estimates, Amy agent for photo estimates, and Open Food Facts only for product matches backed by that source.",
   "For photo estimates, identify visible foods with short editable titles. Never use a local file name, URI, or generic 'image' label as the food title.",
   "When portions are uncertain, choose a practical serving estimate, include visible sauces/oils/sides, and lower confidence instead of undercounting.",
   "Return only JSON with this shape:",
@@ -187,16 +207,80 @@ function buildUserContent(prompt: string, context?: EstimateContext) {
 function buildImageUserText(prompt: string, caption?: string, context?: EstimateContext) {
   const lines = [prompt.trim()];
   if (caption?.trim()) lines.push(`User note: ${caption.trim()}`);
+  lines.push("Use all attached photos together as one calorie-tracking request.");
+  lines.push("You may use web search for product or restaurant context. Prefer Open Food Facts for packaged-food evidence when it is available.");
   if (context?.locationLabel) lines.push(`Rough location context for restaurant guesses: ${context.locationLabel}.`);
   if (context?.calorieBias && context.calorieBias !== "balanced") lines.push(`User calorie bias preference: ${context.calorieBias}.`);
   return lines.join("\n");
 }
 
-async function imageUriToDataUrl(uri: string): Promise<string> {
-  if (Platform.OS === "web") return uri;
-  const base64 = await new File(uri).base64();
-  const mime = uri.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
+async function imageUriToDataUrl(image: ImageEstimateInput): Promise<string> {
+  if (image.dataUrl?.startsWith("data:image/")) return image.dataUrl;
+  if (Platform.OS === "web") {
+    if (image.uri.startsWith("data:image/") || /^https?:\/\//i.test(image.uri)) return image.uri;
+    throw new Error("Could not read this browser image. Choose it from gallery again.");
+  }
+  const base64 = await new File(image.uri).base64();
+  const mime = image.uri.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
   return `data:${mime};base64,${base64}`;
+}
+
+async function requestImageEstimate({
+  apiKey,
+  model,
+  dataUrls,
+  prompt,
+  caption,
+  context
+}: {
+  apiKey: string;
+  model: string;
+  dataUrls: string[];
+  prompt: string;
+  caption?: string;
+  context?: EstimateContext;
+}) {
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://amy.local",
+      "X-OpenRouter-Title": "Amy Local"
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: buildImageUserText(prompt, caption, context) },
+            ...dataUrls.map((url) => ({ type: "image_url", image_url: { url } }))
+          ]
+        }
+      ],
+      response_format: { type: "json_object" },
+      tools: integrationConfig.openRouter.webSearchEnabled
+        ? [{ type: "openrouter:web_search", parameters: { engine: "auto", max_results: 5, search_context_size: "medium" } }]
+        : undefined,
+      temperature: 0.05
+    })
+  });
+
+  const textBody = await response.text();
+  let body: ChatCompletionResponse = {};
+  try {
+    body = JSON.parse(textBody) as ChatCompletionResponse;
+  } catch {
+    body = {};
+  }
+
+  if (!response.ok) throw new Error(body.error?.message ?? `OpenRouter failed (${response.status}).`);
+
+  const content = messageContentText(body.choices?.[0]?.message?.content);
+  if (!content) throw new Error("OpenRouter returned no content.");
+  return content;
 }
 
 export async function estimateMealText(prompt: string, day: string, context?: EstimateContext): Promise<{ drafts: FoodDraft[]; notice?: string; error?: string }> {
@@ -241,7 +325,7 @@ export async function estimateMealText(prompt: string, day: string, context?: Es
     const content = payload.choices?.[0]?.message?.content;
     if (!content) throw new Error("OpenRouter returned no content.");
 
-    const modelPayload = parseModelJson(content);
+    const modelPayload = parseModelJson(messageContentText(content));
     const items = Array.isArray(modelPayload.items) ? modelPayload.items : [];
     const drafts = items
       .map((item, index) => (typeof item === "object" && item ? itemToDraft(item as AiItem, day, prompt, index) : null))
@@ -260,63 +344,48 @@ export async function estimateMealText(prompt: string, day: string, context?: Es
 }
 
 export async function estimateMealImage({
-  imageUri,
+  images,
   day,
   mode,
   caption,
   context
 }: {
-  imageUri: string;
+  images: ImageEstimateInput[];
   day: string;
   mode: "photo" | "label";
   caption?: string;
   context?: EstimateContext;
 }): Promise<{ drafts: FoodDraft[]; notice?: string; error?: string }> {
   const source: FoodSource = mode === "label" ? "label_ocr" : "ai_photo";
-  const fallback = localEstimate(caption || (mode === "label" ? "Nutrition label photo" : "Meal photo"), day, source);
   const apiKey = context?.openRouterKey?.trim() ?? "";
 
   if (!apiKey) {
-    return { drafts: [fallback], notice: "Add an OpenRouter key in Settings for AI image estimates." };
+    return { drafts: [], error: "Add an OpenRouter key in Settings for AI image estimates." };
   }
 
   try {
-    const dataUrl = await imageUriToDataUrl(imageUri);
+    const selectedImages = images.filter((image) => image.uri.trim());
+    if (!selectedImages.length) throw new Error("Add at least one food photo first.");
+    const dataUrls = await Promise.all(selectedImages.map(imageUriToDataUrl));
     const prompt =
       mode === "label"
-        ? "Read this nutrition label. Return calories and macros for one normal serving. Use a short editable food title."
-        : "Estimate calories and macros for the visible meal. Be practical and conservative. Use short editable food titles for the visible foods.";
+        ? "Act as Amy's calorie-tracking agent. Read the attached nutrition-label or package photos, use product context when needed, and return the calories and macros for the portion the user is logging. Use short editable food titles."
+        : "Act as Amy's calorie-tracking agent. Inspect the attached meal photos, use web/product context when helpful, identify the visible foods, and estimate the calories and macros for what the user likely ate. Be practical and conservative.";
+    const preferredModel = context?.openRouterModel?.trim() || integrationConfig.openRouter.defaultVisionModel;
+    const modelAttempts = Array.from(new Set([preferredModel, integrationConfig.openRouter.defaultVisionModel, integrationConfig.openRouter.fallbackVisionModel]));
+    let content = "";
+    let lastError = "";
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://amy.local",
-        "X-OpenRouter-Title": "Amy Local"
-      },
-      body: JSON.stringify({
-        model: context?.openRouterModel?.trim() || integrationConfig.openRouter.defaultModel,
-        messages: [
-          { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: buildImageUserText(prompt, caption, context) },
-              { type: "image_url", image_url: { url: dataUrl } }
-            ]
-          }
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0.05
-      })
-    });
+    for (const model of modelAttempts) {
+      try {
+        content = await requestImageEstimate({ apiKey, model, dataUrls, prompt, caption, context });
+        break;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : "OpenRouter image analysis failed.";
+      }
+    }
 
-    const body = (await response.json()) as ChatCompletionResponse;
-    if (!response.ok) throw new Error(body.error?.message ?? `OpenRouter failed (${response.status}).`);
-
-    const content = body.choices?.[0]?.message?.content;
-    if (!content) throw new Error("OpenRouter returned no content.");
+    if (!content) throw new Error(lastError || "OpenRouter image analysis failed.");
 
     const modelPayload = parseModelJson(content);
     const items = Array.isArray(modelPayload.items) ? modelPayload.items : [];
@@ -328,15 +397,14 @@ export async function estimateMealImage({
         return itemToDraft(aiItem, day, rawInput, index, source);
       })
       .filter((draft): draft is FoodDraft => Boolean(draft))
-      .map((draft) => ({ ...draft, imageUri }));
+      .map((draft) => ({ ...draft, imageUri: selectedImages[0]?.uri }));
 
     const unique = uniqueDrafts(drafts);
     if (!unique.length) throw new Error("OpenRouter returned no usable image estimate.");
     return { drafts: unique, notice: mode === "label" ? "Label estimate ready." : "Photo estimate ready." };
   } catch (error) {
     return {
-      drafts: [{ ...fallback, imageUri }],
-      notice: "OpenRouter image analysis was unavailable. Amy kept an editable fallback.",
+      drafts: [],
       error: error instanceof Error ? error.message : "OpenRouter image analysis failed."
     };
   }

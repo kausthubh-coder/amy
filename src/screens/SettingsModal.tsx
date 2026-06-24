@@ -1,5 +1,6 @@
 import * as Clipboard from "expo-clipboard";
 import { File, Paths } from "expo-file-system";
+import { StorageAccessFramework } from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import React, { useMemo, useState } from "react";
 import { Platform, StyleSheet, Switch, Text, TextInput, View } from "react-native";
@@ -11,6 +12,39 @@ import { getLocationContext } from "../services/location";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
 import { labelForDay } from "../utils/date";
+
+const EXPORT_MIME_TYPE = "application/json";
+const ANDROID_DOWNLOAD_FOLDER = "Download";
+
+function exportFileName() {
+  return `amy-export-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+}
+
+async function writeAndroidExport(directoryUri: string, fileName: string, text: string) {
+  const fileUri = await StorageAccessFramework.createFileAsync(directoryUri, fileName, EXPORT_MIME_TYPE);
+  await StorageAccessFramework.writeAsStringAsync(fileUri, text, { encoding: "utf8" });
+}
+
+async function pickAndroidExportDirectory() {
+  return StorageAccessFramework.requestDirectoryPermissionsAsync(StorageAccessFramework.getUriForDirectoryInRoot(ANDROID_DOWNLOAD_FOLDER));
+}
+
+async function saveAndroidDownload(fileName: string, text: string, rememberedDirectoryUri?: string) {
+  if (rememberedDirectoryUri) {
+    try {
+      await writeAndroidExport(rememberedDirectoryUri, fileName, text);
+      return { saved: true, directoryUri: rememberedDirectoryUri };
+    } catch {
+      // The user may have revoked folder access; ask again below.
+    }
+  }
+
+  const permission = await pickAndroidExportDirectory();
+  if (!permission.granted) return { saved: false };
+
+  await writeAndroidExport(permission.directoryUri, fileName, text);
+  return { saved: true, directoryUri: permission.directoryUri };
+}
 
 function Row({
   icon,
@@ -74,32 +108,76 @@ export function SettingsModal() {
     setNotice(openRouterKey.trim() ? "OpenRouter key saved locally." : "OpenRouter key cleared.");
   };
 
-  const shareExport = async () => {
+  const copyExport = async () => {
     const text = exportText();
+    await Clipboard.setStringAsync(text);
+    setNotice("Export copied to clipboard.");
+  };
+
+  const downloadExport = async () => {
+    const text = exportText();
+    const fileName = exportFileName();
     if (Platform.OS === "web") {
-      await Clipboard.setStringAsync(text);
-      setNotice("Export copied to clipboard.");
+      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setNotice("Export downloaded.");
       return;
     }
 
-    const file = new File(Paths.document, `amy-export-${Date.now()}.json`);
+    if (Platform.OS === "android") {
+      try {
+        const result = await saveAndroidDownload(fileName, text, data.settings.androidExportDirectoryUri);
+        if (!result.saved) {
+          setNotice("Export download canceled.");
+          return;
+        }
+        if (result.directoryUri !== data.settings.androidExportDirectoryUri) {
+          updateSettings({ androidExportDirectoryUri: result.directoryUri });
+        }
+        setNotice("Export downloaded to your selected folder.");
+        return;
+      } catch {
+        setNotice("Download failed. Opening export options instead.");
+      }
+    }
+
+    const file = new File(Paths.document, fileName);
     file.write(text);
     if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(file.uri, { mimeType: "application/json", dialogTitle: "Export Amy data" });
-      setNotice("Export ready.");
+      await Sharing.shareAsync(file.uri, { mimeType: "application/json", dialogTitle: "Download Amy data" });
+      setNotice("Export file ready.");
     } else {
       await Clipboard.setStringAsync(text);
       setNotice("Export copied to clipboard.");
     }
   };
 
-  const applyImport = () => {
+  const applyImportText = (text: string) => {
     try {
-      importText(importValue);
+      importText(text);
       setImportValue("");
       setNotice("Import complete.");
     } catch {
       setNotice("Import failed. Paste a full Amy JSON export.");
+    }
+  };
+
+  const applyImport = () => applyImportText(importValue);
+
+  const importFile = async () => {
+    try {
+      const picked = await File.pickFileAsync({ mimeTypes: ["application/json", "text/plain", "*/*"] });
+      if (picked.canceled) return;
+      const text = await picked.result.text();
+      applyImportText(text);
+    } catch {
+      setNotice("Import failed. Choose a full Amy JSON export file.");
     }
   };
 
@@ -220,8 +298,16 @@ export function SettingsModal() {
         <Text style={styles.section}>Local Data</Text>
         <Text style={styles.privacy}>{privacyBoundary.localData}</Text>
         <Text style={styles.privacy}>{privacyBoundary.allowedCloud}</Text>
-        <InteractivePressable onPress={shareExport} style={styles.secondaryButton}>
-          <Text style={styles.secondaryText}>Export data</Text>
+        <View style={styles.exportActions}>
+          <InteractivePressable onPress={downloadExport} style={[styles.secondaryButton, styles.exportButton]}>
+            <Text style={styles.secondaryText}>Download JSON</Text>
+          </InteractivePressable>
+          <InteractivePressable onPress={copyExport} style={[styles.secondaryButton, styles.exportButton]}>
+            <Text style={styles.secondaryText}>Copy JSON</Text>
+          </InteractivePressable>
+        </View>
+        <InteractivePressable onPress={importFile} style={styles.secondaryButton}>
+          <Text style={styles.secondaryText}>Import file</Text>
         </InteractivePressable>
         <TextInput
           value={importValue}
@@ -232,7 +318,7 @@ export function SettingsModal() {
           style={[styles.input, styles.importBox]}
         />
         <InteractivePressable onPress={applyImport} style={styles.secondaryButton}>
-          <Text style={styles.secondaryText}>Import data</Text>
+          <Text style={styles.secondaryText}>Import pasted JSON</Text>
         </InteractivePressable>
       </View>
 
@@ -417,6 +503,13 @@ const styles = StyleSheet.create({
     color: colors.ink,
     fontSize: 16,
     fontWeight: "900"
+  },
+  exportActions: {
+    flexDirection: "row",
+    gap: 10
+  },
+  exportButton: {
+    flex: 1
   },
   importBox: {
     minHeight: 112,

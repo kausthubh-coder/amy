@@ -1,18 +1,22 @@
 import { BarcodeScanningResult, CameraView, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
-import { Barcode, Camera, Circle, Flashlight, Image as ImageIcon, Keyboard, Mic } from "lucide-react-native";
+import { ActivityIndicator, Image, Platform, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { Barcode, Camera, Flashlight, Image as ImageIcon, Keyboard, Mic, Plus, Sparkles, X } from "lucide-react-native";
 
 import { InteractivePressable } from "../components/InteractivePressable";
 import { createId } from "../domain/seed";
 import { FoodDraft, MacroTotals } from "../domain/types";
 import { getLocationContext } from "../services/location";
 import { lookupOpenFoodFactsProduct } from "../services/openFoodFacts";
-import { estimateMealImage } from "../services/openRouter";
+import { estimateMealImage, ImageEstimateInput } from "../services/openRouter";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
 import { CaptureMode } from "./TodayScreen";
+
+type AgentImage = ImageEstimateInput & {
+  id: string;
+};
 
 function cleanTitle(value: string) {
   return value.trim().replace(/\s+/g, " ");
@@ -90,6 +94,21 @@ function imageEntryDraft(drafts: FoodDraft[], line: string, imageUri: string, da
   };
 }
 
+function imageDataUrlFromBase64(base64?: string | null, mimeType?: string | null) {
+  if (!base64) return undefined;
+  const safeMimeType = mimeType === "image/png" || mimeType === "image/webp" ? mimeType : "image/jpeg";
+  return `data:${safeMimeType};base64,${base64}`;
+}
+
+function imageFromAsset(asset: ImagePicker.ImagePickerAsset | undefined): AgentImage | undefined {
+  if (!asset?.uri) return undefined;
+  return {
+    id: createId("agent_image"),
+    uri: asset.uri,
+    dataUrl: imageDataUrlFromBase64(asset.base64, asset.mimeType)
+  };
+}
+
 export function CaptureModal({
   mode,
   onDone,
@@ -106,6 +125,7 @@ export function CaptureModal({
   const [busy, setBusy] = useState(false);
   const [caption, setCaption] = useState("");
   const [notice, setNotice] = useState("");
+  const [agentImages, setAgentImages] = useState<AgentImage[]>([]);
   const [torchOn, setTorchOn] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const cameraRef = useRef<CameraView | null>(null);
@@ -113,12 +133,15 @@ export function CaptureModal({
   const barcodeLookupInFlightRef = useRef(false);
   const { height } = useWindowDimensions();
 
-  const needsCamera = mode === "barcode" || mode === "photo" || mode === "label";
+  const needsCamera = mode === "barcode";
   const canUseCamera = Platform.OS !== "web" && needsCamera;
-  const cameraHeight = Math.round(Math.max(mode === "barcode" ? 356 : 386, Math.min(mode === "barcode" ? 430 : 460, height * 0.54)));
+  const cameraHeight = Math.round(Math.max(356, Math.min(430, height * 0.54)));
 
   useEffect(() => {
     setCameraReady(false);
+    setCaption("");
+    setAgentImages([]);
+    setNotice("");
   }, [mode]);
 
   const lookupBarcode = async (code: string) => {
@@ -157,13 +180,74 @@ export function CaptureModal({
     void lookupBarcode(result.data);
   };
 
-  const analyzeImageUri = async (imageUri: string) => {
+  const addAgentImages = (images: AgentImage[]) => {
+    if (!images.length) return;
+    setNotice("");
+    setAgentImages((current) => [...current, ...images].slice(0, 6));
+  };
+
+  const pickAgentImages = async () => {
+    if (busy) return;
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        setNotice("Gallery permission is needed to choose food photos.");
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        quality: 0.72,
+        base64: true,
+        allowsEditing: false,
+        allowsMultipleSelection: true,
+        selectionLimit: 6
+      });
+      if (result.canceled) return;
+      addAgentImages(result.assets.map(imageFromAsset).filter((image): image is AgentImage => Boolean(image)));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not choose these images.");
+    }
+  };
+
+  const takeAgentPhoto = async () => {
+    if (busy) return;
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        setNotice("Camera permission is needed to take a food photo.");
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        quality: 0.72,
+        base64: true,
+        allowsEditing: false
+      });
+      if (result.canceled) return;
+      const image = imageFromAsset(result.assets?.[0]);
+      if (image) addAgentImages([image]);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not take this photo.");
+    }
+  };
+
+  const removeAgentImage = (imageId: string) => {
+    setAgentImages((current) => current.filter((image) => image.id !== imageId));
+  };
+
+  const submitImageAgent = async () => {
+    if (busy) return;
+    if (!agentImages.length) {
+      setNotice("Add at least one food photo first.");
+      return;
+    }
     try {
       setBusy(true);
+      setNotice("Running food agent...");
       const note = caption.trim();
       const locationContext = data?.settings.locationForRestaurants ? await getLocationContext() : {};
       const estimate = await estimateMealImage({
-        imageUri,
+        images: agentImages,
         day: selectedDay,
         mode: mode === "label" ? "label" : "photo",
         caption: note,
@@ -174,57 +258,19 @@ export function CaptureModal({
           openRouterModel: data?.settings.openRouterModel
         }
       });
+      if (!estimate.drafts.length) {
+        setNotice(estimate.error ?? estimate.notice ?? locationContext.error ?? "Could not analyze this image.");
+        return;
+      }
       const line = imageLogLine(estimate.drafts, note, mode === "label" ? "label" : "photo");
-      const draft = imageEntryDraft(estimate.drafts, line, imageUri, selectedDay, mode === "label" ? "label" : "photo");
+      const draft = imageEntryDraft(estimate.drafts, line, agentImages[0]?.uri ?? "", selectedDay, mode === "label" ? "label" : "photo");
       addEntryFromDraft(draft, line);
-      setNotice(locationContext.error ?? estimate.error ?? estimate.notice ?? "Image logged.");
+      setNotice(locationContext.error ?? estimate.error ?? estimate.notice ?? "Food logged.");
       onDone();
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Could not analyze this image.");
+      setNotice(error instanceof Error ? error.message : "Could not run the food agent.");
     } finally {
       setBusy(false);
-    }
-  };
-
-  const captureImage = async () => {
-    if (busy) return;
-    if (!cameraRef.current) {
-      setNotice("Camera is not ready yet.");
-      return;
-    }
-    if (!cameraReady) {
-      setNotice("Camera is still starting.");
-      return;
-    }
-    try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.82 });
-      if (!photo?.uri) {
-        setNotice("No image was captured.");
-        return;
-      }
-      await analyzeImageUri(photo.uri);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Could not capture this image.");
-    }
-  };
-
-  const pickImage = async () => {
-    if (busy) return;
-    try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        setNotice("Gallery permission is needed to choose a food photo.");
-        return;
-      }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
-        quality: 0.82,
-        allowsEditing: false
-      });
-      const asset = result.assets?.[0];
-      if (!result.canceled && asset?.uri) await analyzeImageUri(asset.uri);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Could not choose this image.");
     }
   };
 
@@ -266,11 +312,89 @@ export function CaptureModal({
     );
   }
 
+  if (mode === "photo" || mode === "label") {
+    const agentTitle = mode === "label" ? "Label agent" : "Food agent";
+    const submitDisabled = busy || agentImages.length === 0;
+
+    return (
+      <View style={styles.stack}>
+        <View style={styles.agentHeader}>
+          <View style={styles.agentIcon}>
+            <Sparkles size={24} color={colors.ink} strokeWidth={2.5} />
+          </View>
+          <View style={styles.agentHeaderText}>
+            <Text style={styles.agentTitle}>{agentTitle}</Text>
+            <Text style={styles.agentMeta}>{agentImages.length ? `${agentImages.length} photo${agentImages.length === 1 ? "" : "s"}` : "No photos"}</Text>
+          </View>
+        </View>
+
+        <View style={styles.agentActions}>
+          <InteractivePressable onPress={takeAgentPhoto} disabled={busy} style={styles.agentActionButton}>
+            <Camera size={22} color={colors.ink} strokeWidth={2.5} />
+            <Text style={styles.agentActionText}>Camera</Text>
+          </InteractivePressable>
+          <InteractivePressable onPress={pickAgentImages} disabled={busy} style={styles.agentActionButton}>
+            <ImageIcon size={22} color={colors.ink} strokeWidth={2.5} />
+            <Text style={styles.agentActionText}>Photos</Text>
+          </InteractivePressable>
+        </View>
+
+        {agentImages.length ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.thumbnailRow}>
+            {agentImages.map((image, index) => (
+              <View key={image.id} style={styles.thumbnailCard}>
+                <Image source={{ uri: image.uri }} style={styles.thumbnailImage} />
+                <Text style={styles.thumbnailIndex}>{index + 1}</Text>
+                <InteractivePressable
+                  accessibilityLabel="Remove photo"
+                  onPress={() => removeAgentImage(image.id)}
+                  disabled={busy}
+                  style={styles.removeThumbnail}
+                >
+                  <X size={18} color={colors.ink} strokeWidth={2.6} />
+                </InteractivePressable>
+              </View>
+            ))}
+            {agentImages.length < 6 ? (
+              <InteractivePressable onPress={pickAgentImages} disabled={busy} style={styles.addMoreCard}>
+                <Plus size={24} color={colors.ink} strokeWidth={2.6} />
+              </InteractivePressable>
+            ) : null}
+          </ScrollView>
+        ) : (
+          <InteractivePressable onPress={pickAgentImages} disabled={busy} style={styles.emptyDropZone}>
+            <ImageIcon size={30} color={colors.dim} strokeWidth={2.5} />
+            <Text style={styles.emptyDropText}>Add photos</Text>
+          </InteractivePressable>
+        )}
+
+        <TextInput
+          value={caption}
+          onChangeText={setCaption}
+          multiline
+          placeholder={mode === "label" ? "Optional prompt or serving detail" : "Optional prompt"}
+          placeholderTextColor={colors.dim}
+          style={styles.promptInput}
+        />
+
+        <InteractivePressable
+          feedbackKind="success"
+          onPress={submitImageAgent}
+          disabled={submitDisabled}
+          style={[styles.submitButton, submitDisabled && styles.disabledButton]}
+        >
+          {busy ? <ActivityIndicator color={colors.ink} /> : <Sparkles size={22} color={colors.ink} strokeWidth={2.6} />}
+          <Text style={styles.submitText}>{busy ? "Running..." : "Submit"}</Text>
+        </InteractivePressable>
+
+        {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+      </View>
+    );
+  }
+
   return (
     <View style={styles.stack}>
-      <Text style={styles.copy}>
-        {mode === "barcode" ? "Point at the code and hold steady inside the frame." : "Use a photo plus a note for better Gemini 3.5 estimates."}
-      </Text>
+      <Text style={styles.copy}>Point at the code and hold steady inside the frame.</Text>
 
       {canUseCamera ? (
         !permission?.granted ? (
@@ -300,39 +424,16 @@ export function CaptureModal({
               >
                 <Flashlight size={21} color={torchOn ? colors.bg : colors.ink} strokeWidth={2.5} />
               </InteractivePressable>
-              {mode !== "barcode" ? (
-                <InteractivePressable accessibilityLabel="Choose from gallery" onPress={pickImage} style={styles.overlayButton}>
-                  <ImageIcon size={21} color={colors.ink} strokeWidth={2.5} />
-                </InteractivePressable>
-              ) : null}
             </View>
-            {mode !== "barcode" ? (
-              <View style={styles.overlayBottom}>
-                <InteractivePressable accessibilityLabel="Capture food photo" onPress={captureImage} disabled={busy} style={styles.captureButton}>
-                  {busy ? <ActivityIndicator color={colors.ink} /> : <Circle size={34} color={colors.ink} fill={colors.ink} strokeWidth={2.2} />}
-                </InteractivePressable>
-              </View>
-            ) : (
-              <View style={styles.barcodeHint} pointerEvents="none">
-                <Barcode size={24} color={colors.ink} />
-                <Text style={styles.barcodeHintText}>Align barcode inside the frame</Text>
-              </View>
-            )}
+            <View style={styles.barcodeHint} pointerEvents="none">
+              <Barcode size={24} color={colors.ink} />
+              <Text style={styles.barcodeHintText}>Align barcode inside the frame</Text>
+            </View>
           </View>
         )
       ) : (
         <Text style={styles.notice}>Camera preview is Android-first. Use your phone camera to scan packages.</Text>
       )}
-
-      {mode !== "barcode" ? (
-        <TextInput
-          value={caption}
-          onChangeText={setCaption}
-          placeholder={mode === "label" ? "Typed note for the label photo" : "Typed note for the food photo"}
-          placeholderTextColor={colors.dim}
-          style={styles.input}
-        />
-      ) : null}
 
       {busy ? <ActivityIndicator color={colors.purple} /> : null}
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
@@ -356,6 +457,158 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     paddingHorizontal: 2
   },
+  agentHeader: {
+    minHeight: 66,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12
+  },
+  agentIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.purple,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.18)"
+  },
+  agentHeaderText: {
+    flex: 1,
+    minWidth: 0
+  },
+  agentTitle: {
+    color: colors.ink,
+    fontSize: 24,
+    fontWeight: "900"
+  },
+  agentMeta: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 14,
+    fontWeight: "800"
+  },
+  agentActions: {
+    flexDirection: "row",
+    gap: 10
+  },
+  agentActionButton: {
+    flex: 1,
+    height: 58,
+    borderRadius: 18,
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  agentActionText: {
+    color: colors.ink,
+    fontSize: 16,
+    fontWeight: "900"
+  },
+  thumbnailRow: {
+    minHeight: 112,
+    gap: 10,
+    paddingRight: 4
+  },
+  thumbnailCard: {
+    width: 104,
+    height: 104,
+    borderRadius: 22,
+    overflow: "hidden",
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  thumbnailImage: {
+    width: "100%",
+    height: "100%"
+  },
+  thumbnailIndex: {
+    position: "absolute",
+    left: 8,
+    top: 8,
+    minWidth: 24,
+    height: 24,
+    borderRadius: 999,
+    overflow: "hidden",
+    textAlign: "center",
+    color: colors.ink,
+    fontSize: 13,
+    lineHeight: 24,
+    fontWeight: "900",
+    backgroundColor: "rgba(0, 0, 0, 0.62)"
+  },
+  removeThumbnail: {
+    position: "absolute",
+    right: 7,
+    top: 7,
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.66)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.22)"
+  },
+  addMoreCard: {
+    width: 104,
+    height: 104,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  emptyDropZone: {
+    minHeight: 132,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  emptyDropText: {
+    color: colors.ink,
+    fontSize: 17,
+    fontWeight: "900"
+  },
+  promptInput: {
+    minHeight: 104,
+    borderRadius: 20,
+    backgroundColor: colors.panel2,
+    color: colors.ink,
+    fontSize: 17,
+    lineHeight: 24,
+    fontWeight: "800",
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    textAlignVertical: "top"
+  },
+  submitButton: {
+    height: 58,
+    borderRadius: 999,
+    flexDirection: "row",
+    gap: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.purple
+  },
+  disabledButton: {
+    opacity: 0.48
+  },
+  submitText: {
+    color: colors.ink,
+    fontSize: 17,
+    fontWeight: "900"
+  },
   input: {
     minHeight: 56,
     borderRadius: 18,
@@ -364,6 +617,22 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "800",
     paddingHorizontal: 14
+  },
+  galleryButton: {
+    height: 56,
+    borderRadius: 18,
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  galleryText: {
+    color: colors.ink,
+    fontSize: 16,
+    fontWeight: "900"
   },
   primaryButton: {
     height: 58,

@@ -69,7 +69,8 @@ function exportableData(data: AmyLocalData): AmyLocalData {
     ...data,
     settings: {
       ...data.settings,
-      openRouterKey: ""
+      openRouterKey: "",
+      androidExportDirectoryUri: undefined
     }
   };
 }

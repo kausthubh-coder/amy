@@ -53,7 +53,7 @@ function AppBody() {
   const [dictationSignal, setDictationSignal] = useState(0);
   const [prefillText, setPrefillText] = useState("");
   const [prefillBarcode, setPrefillBarcode] = useState("");
-  const captureTitle = captureMode === "barcode" ? "Scan barcode" : captureMode === "label" ? "Capture label" : "Capture meal";
+  const captureTitle = captureMode === "barcode" ? "Scan barcode" : captureMode === "label" ? "Label agent" : "Food agent";
   const captureTitleIcon =
     captureMode === "barcode" ? (
       <Barcode size={28} color={colors.orange} strokeWidth={2.5} />

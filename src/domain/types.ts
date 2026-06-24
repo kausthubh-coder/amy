@@ -74,6 +74,7 @@ export type AppSettings = {
   dictationLanguage: string;
   openRouterModel: string;
   openRouterKey: string;
+  androidExportDirectoryUri?: string;
 };
 
 export type DayNote = {
