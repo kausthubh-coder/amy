@@ -5,6 +5,18 @@ export type MacroTotals = {
   fat: number;
 };
 
+export type PortionUnit = "serving" | "g";
+
+export type FoodPortion = {
+  amount: number;
+  unit: PortionUnit;
+  servingLabel: string;
+  servingGrams?: number;
+  baseAmount: number;
+  baseUnit: PortionUnit;
+  baseMacros: MacroTotals;
+};
+
 export type FoodSource = "ai_text" | "ai_photo" | "label_ocr" | "open_food_facts" | "saved_meal" | "manual" | "local_fallback";
 
 export type FoodEntry = {
@@ -17,6 +29,7 @@ export type FoodEntry = {
   source: FoodSource;
   confidence: number;
   sourceLabel?: string;
+  portion?: FoodPortion;
   barcode?: string;
   imageUri?: string;
   createdAt: string;
@@ -33,6 +46,7 @@ export type FoodDraft = {
   source: FoodSource;
   confidence: number;
   sourceLabel?: string;
+  portion?: FoodPortion;
   barcode?: string;
   imageUri?: string;
   createdAt: string;
@@ -43,6 +57,7 @@ export type SavedMeal = {
   title: string;
   servingLabel: string;
   macros: MacroTotals;
+  portion?: FoodPortion;
   lastLoggedAt?: string;
   createdAt: string;
 };

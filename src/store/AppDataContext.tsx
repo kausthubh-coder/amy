@@ -79,7 +79,9 @@ function draftKey(draft: FoodDraft) {
     draft.macros.calories,
     Math.round(draft.macros.carbs),
     Math.round(draft.macros.protein),
-    Math.round(draft.macros.fat)
+    Math.round(draft.macros.fat),
+    draft.portion?.unit ?? "",
+    draft.portion?.amount ?? ""
   ].join("|");
 }
 
@@ -118,6 +120,7 @@ function entryFromDraft(draft: FoodDraft, rawInput = draft.rawInput): FoodEntry 
     source: draft.source,
     confidence: draft.confidence,
     sourceLabel: draft.sourceLabel,
+    portion: draft.portion,
     barcode: draft.barcode,
     imageUri: draft.imageUri,
     createdAt: nowIso(),
@@ -297,6 +300,7 @@ export function LocalDataProvider({ children }: { children: ReactNode }) {
             source: "saved_meal",
             confidence: 1,
             sourceLabel: "Saved meal",
+            portion: meal.portion,
             createdAt: nowIso(),
             updatedAt: nowIso()
           };
