@@ -1,14 +1,26 @@
 {
   "name": "amy-calorie-tracker",
-  "version": "1.0.4",
+  "version": "1.0.6",
+  "description": "Android-first calorie tracking built around fast line-by-line meal logging.",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "private": true,
   "main": "index.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kausthubh-coder/amy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kausthubh-coder/amy/issues"
+  },
+  "homepage": "https://github.com/kausthubh-coder/amy#readme",
   "scripts": {
     "dev": "expo start --host lan",
     "start": "npm run dev",
     "web": "expo start --web --host lan",
-    "android": "expo start --android",
+    "android": "expo run:android",
     "test": "tsc --noEmit",
+    "check:deps": "expo install --check",
+    "audit:release": "npm test && npm run check:deps && npx expo-doctor",
     "prebuild:android": "expo prebuild --platform android --no-install",
     "build:local:android": "cd android && ./gradlew assembleRelease",
     "eas:login": "npx eas-cli@latest login",

@@ -1,0 +1,14 @@
+Amy is an Android-first calorie tracker where logging feels like writing one food per line.
+
+Type a food or meal, press Enter, and Amy turns it into editable calories and macros. You can scan packaged foods through Open Food Facts, estimate food photos or nutrition labels with your own OpenRouter key, save repeat meals, swipe between days, track weight, and export or import your data as JSON.
+
+Core principles:
+
+- No account required.
+- No ads or tracking SDKs.
+- Diary data stays on device.
+- Manual logging works without an API key.
+- Barcode lookup uses Open Food Facts.
+- AI estimates are optional and require a user-supplied OpenRouter key.
+
+Amy is source-available under the PolyForm Noncommercial License 1.0.0. Commercial use or monetized redistribution requires written permission.

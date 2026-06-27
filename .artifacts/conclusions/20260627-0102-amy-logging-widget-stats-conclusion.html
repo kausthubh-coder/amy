@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Amy Logging, Widget, and Stats Fix Conclusion</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #101012; color: #f5f5f5; line-height: 1.55; }
+    main { max-width: 980px; margin: 0 auto; padding: 32px 20px 56px; }
+    h1 { margin: 0 0 8px; font-size: 30px; }
+    h2 { margin-top: 28px; font-size: 20px; }
+    p, li { color: #d4d4d8; }
+    code { color: #fff; background: #26262a; padding: 2px 6px; border-radius: 6px; }
+    .meta { color: #a1a1aa; font-size: 14px; }
+    .card { border: 1px solid #34343a; background: #1c1c20; border-radius: 14px; padding: 18px; margin-top: 16px; }
+    .ok { color: #4ade80; font-weight: 700; }
+    .warn { color: #facc15; font-weight: 700; }
+    a { color: #7dd3fc; }
+    img { width: 100%; max-width: 420px; border: 1px solid #34343a; border-radius: 12px; background: #000; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; align-items: start; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Amy Logging, Widget, and Stats Fix Conclusion</h1>
+    <div class="meta">
+      Artifact type: Oracle conclusion<br />
+      Run ID: 20260627-0102-amy-logging-widget-stats<br />
+      Date: June 27, 2026 01:34 AM EDT<br />
+      Project root: <code>/Users/kaust/Documents/amy</code><br />
+      Plan: <a href="../plans/20260627-0102-amy-logging-widget-stats-plan.html">20260627-0102-amy-logging-widget-stats-plan.html</a><br />
+      Human guide: <code>/Users/kaust/Documents/amy/human.md</code>
+    </div>
+
+    <section class="card">
+      <h2>Final Status</h2>
+      <p><span class="ok">Complete.</span> The requested logging, widget, stats, streak, macro, and release-prep fixes were implemented, locally built, emulator-smoke-tested, reviewed by parallel worker threads, and sent to EAS Preview.</p>
+    </section>
+
+    <section class="card">
+      <h2>What Changed</h2>
+      <ul>
+        <li>Photo, barcode, and saved-meal capture can force a visible note line even when the line duplicates an existing prompt, fixing the counted-calories-with-no-text behavior.</li>
+        <li>Today merges external note updates while editing, and the right calorie rail tracks TextInput scroll offset so long notes stay aligned.</li>
+        <li>Current streak is now contiguous; total logged days is shown separately.</li>
+        <li>Stats modal header now uses only the top tabs plus close button. The duplicate Stats title was removed.</li>
+        <li>Stats bars show actual values, and Streaks shows current streak, total logged days, today eaten, week calories, macro totals, and calendar.</li>
+        <li>Macro rings now use SVG stroke progress and distinct macro colors instead of static/all-green circles.</li>
+        <li>Android widgets now use consumed/logged calorie language, consistent fire calorie labels, vector action icons, resize metadata, weighted layouts, and refresh-on-resize hooks.</li>
+        <li>Release metadata was advanced to Amy 1.0.6 / Android versionCode 8, including Fastlane changelog 8.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Parallel Review Threads</h2>
+      <ul>
+        <li>Harvey <code>019f078e-901f-7d92-be91-584527a3bb46</code>: PASS for photo/prompt note-line visibility and Today rail scroll alignment. Static/typecheck review only.</li>
+        <li>Einstein <code>019f078e-9255-7480-a79c-078c8c6bc811</code>: PASS for Stats header, contiguous streaks, Streaks totals, and macro progress rings.</li>
+        <li>Fermat <code>019f078e-938d-70a2-8c49-dfc05db29aff</code>: PASS for widgets/release packaging after finding the missing Fastlane changelog 8, which was added.</li>
+      </ul>
+      <p>The user-visible Codex thread API described by Oracle was not exposed in this environment, so these were private multi-agent worker threads rather than Codex app threads.</p>
+    </section>
+
+    <section class="card">
+      <h2>Verification</h2>
+      <ul>
+        <li><code>npm run audit:release</code>: PASS. Runs <code>npm test</code>, <code>expo install --check</code>, and <code>npx expo-doctor</code>; Expo Doctor reported 21/21 checks passed.</li>
+        <li><code>git diff --check</code>: PASS after removing two tab-only whitespace lines in the widget plugin.</li>
+        <li><code>node --check plugins/withAmyAndroidWidgets.js</code>: PASS.</li>
+        <li><code>npm run prebuild:android</code>: PASS.</li>
+        <li><code>ANDROID_HOME="$HOME/Library/Android/sdk" ANDROID_SDK_ROOT="$HOME/Library/Android/sdk" npm run build:local:android</code>: PASS.</li>
+        <li><code>aapt2 dump badging builds/amy-1.0.6-oracle-fixes-20260627.apk</code>: PASS, package <code>com.kaust.amy</code>, versionName <code>1.0.6</code>, versionCode <code>8</code>.</li>
+        <li>ADB deep-link checks resolved <code>amy://stats</code>, <code>amy://capture/photo</code>, and <code>amy://scan/barcode</code> to <code>com.kaust.amy/.MainActivity</code>.</li>
+        <li>ADB UI dump and screenshots verified the new Stats/Streaks header and Streaks summary content on the Android emulator.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Builds</h2>
+      <ul>
+        <li>Local APK: <code>/Users/kaust/Documents/amy/builds/amy-1.0.6-oracle-fixes-20260627.apk</code></li>
+        <li>Local APK SHA-256: <code>45ad1fcaf11e340dd924adc1d4324352a997a62a3ed8ba07b4637f37763e37e8</code></li>
+        <li>EAS build ID: <code>f3bda37d-d605-48d4-a419-41df69651fe3</code></li>
+        <li>EAS status: <span class="ok">FINISHED</span>, Android, preview, internal distribution, appVersion <code>1.0.6</code>, appBuildVersion <code>8</code></li>
+        <li>EAS install page: <a href="https://expo.dev/accounts/kausthubh/projects/amy-calorie-tracker/builds/f3bda37d-d605-48d4-a419-41df69651fe3">Expo build page</a></li>
+        <li>EAS APK artifact: <a href="https://expo.dev/artifacts/eas/MzMtXhPxHLezLGx0_AWCWNesVANaMIKkBF95T55CoqE.apk">application APK</a></li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Demo Evidence</h2>
+      <div class="grid">
+        <figure>
+          <img src="../demos/20260627-0102-amy-logging-widget-stats/emulator-stats-after-start.png" alt="Stats tab on Android emulator" />
+          <figcaption>Stats tab after onboarding and deep-link open.</figcaption>
+        </figure>
+        <figure>
+          <img src="../demos/20260627-0102-amy-logging-widget-stats/emulator-final-visible.png" alt="Streaks tab on Android emulator" />
+          <figcaption>Streaks tab with current streak, total logged days, eaten totals, and macro targets.</figcaption>
+        </figure>
+      </div>
+      <p>Peekaboo screenshot capture worked, but AI visual analysis through Peekaboo was blocked by a missing <code>OPENAI_API_KEY</code>. ADB screenshots and UI dumps were used for emulator proof.</p>
+    </section>
+
+    <section class="card">
+      <h2>Known Limitations</h2>
+      <ul>
+        <li>Widget resize behavior was verified through generated XML/provider code and APK registration, not by dragging widgets on a launcher surface.</li>
+        <li>Photo model responses were not end-to-end proven with a live OpenRouter image call during emulator smoke testing; the code path and TypeScript checks passed.</li>
+        <li>The working tree was already dirty before this run with docs/release files. Those unrelated existing changes were preserved.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

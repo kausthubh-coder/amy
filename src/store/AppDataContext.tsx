@@ -7,6 +7,10 @@ import { addDays, toDateKey } from "../utils/date";
 import { loadLocalData, parseImportText, saveLocalData, serializeExport } from "../storage/localDataStore";
 import { syncAndroidWidgets } from "../services/androidWidgetSync";
 
+type AddEntryOptions = {
+  allowDuplicateNoteLine?: boolean;
+};
+
 type AppDataContextValue = {
   data: AmyLocalData | null;
   ready: boolean;
@@ -19,7 +23,7 @@ type AppDataContextValue = {
   updateGoal: (goal: Partial<GoalProfile>) => void;
   updateSettings: (settings: Partial<AppSettings>) => void;
   addDrafts: (drafts: FoodDraft[]) => void;
-  addEntryFromDraft: (draft: FoodDraft, rawInput?: string) => FoodEntry;
+  addEntryFromDraft: (draft: FoodDraft, rawInput?: string, options?: AddEntryOptions) => FoodEntry;
   confirmDraft: (draftId: string) => void;
   updateDraft: (draftId: string, patch: Partial<FoodDraft>) => void;
   updateEntry: (entryId: string, patch: Partial<FoodEntry>) => void;
@@ -57,7 +61,7 @@ function updateDayNotes(notes: AmyLocalData["dayNotes"], day: string, text: stri
     : [...notes, { day, text, updatedAt: nowIso() }];
 }
 
-function appendNoteLine(notes: AmyLocalData["dayNotes"], day: string, rawLine: string) {
+function appendNoteLine(notes: AmyLocalData["dayNotes"], day: string, rawLine: string, options: { allowDuplicate?: boolean } = {}) {
   const line = rawLine.trim();
   if (!line) return notes;
   const existing = notes.find((note) => note.day === day);
@@ -66,7 +70,7 @@ function appendNoteLine(notes: AmyLocalData["dayNotes"], day: string, rawLine: s
     .split(/\r?\n/)
     .map((item) => item.trim())
     .filter(Boolean);
-  if (lines.some((item) => item.toLowerCase() === line.toLowerCase())) return notes;
+  if (!options.allowDuplicate && lines.some((item) => item.toLowerCase() === line.toLowerCase())) return notes;
   return updateDayNotes(notes, day, [...lines, line].join("\n"));
 }
 
@@ -239,13 +243,15 @@ export function LocalDataProvider({ children }: { children: ReactNode }) {
           drafts: current.drafts.map((draft) => (draft.id === draftId ? { ...draft, ...patch } : draft)),
           updatedAt: nowIso()
         })),
-      addEntryFromDraft: (draft, rawInput) => {
+      addEntryFromDraft: (draft, rawInput, options) => {
         const entry = entryFromDraft(draft, rawInput);
         commit((current) => ({
           ...current,
           entries: [entry, ...current.entries],
           drafts: current.drafts.filter((item) => item.id !== draft.id),
-          dayNotes: appendNoteLine(current.dayNotes, entry.day, entry.rawInput ?? entry.title),
+          dayNotes: appendNoteLine(current.dayNotes, entry.day, entry.rawInput ?? entry.title, {
+            allowDuplicate: options?.allowDuplicateNoteLine
+          }),
           updatedAt: nowIso()
         }));
         return entry;
@@ -308,7 +314,7 @@ export function LocalDataProvider({ children }: { children: ReactNode }) {
             ...current,
             entries: [entry, ...current.entries],
             savedMeals: current.savedMeals.map((item) => (item.id === mealId ? { ...item, lastLoggedAt: nowIso() } : item)),
-            dayNotes: appendNoteLine(current.dayNotes, day, meal.title),
+            dayNotes: appendNoteLine(current.dayNotes, day, meal.title, { allowDuplicate: true }),
             updatedAt: nowIso()
           };
         }),

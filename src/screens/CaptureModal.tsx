@@ -156,7 +156,7 @@ export function CaptureModal({
     try {
       const result = await lookupOpenFoodFactsProduct(cleanCode, selectedDay);
       if (result.status === "found") {
-        addEntryFromDraft(result.draft, result.draft.title);
+        addEntryFromDraft(result.draft, result.draft.title, { allowDuplicateNoteLine: true });
         setNotice("Open Food Facts logged.");
         onDone();
       } else {
@@ -264,7 +264,7 @@ export function CaptureModal({
       }
       const line = imageLogLine(estimate.drafts, note, mode === "label" ? "label" : "photo");
       const draft = imageEntryDraft(estimate.drafts, line, agentImages[0]?.uri ?? "", selectedDay, mode === "label" ? "label" : "photo");
-      addEntryFromDraft(draft, line);
+      addEntryFromDraft(draft, line, { allowDuplicateNoteLine: true });
       setNotice(locationContext.error ?? estimate.error ?? estimate.notice ?? "Food logged.");
       onDone();
     } catch (error) {

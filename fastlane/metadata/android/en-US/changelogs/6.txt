@@ -1,0 +1,7 @@
+Release hardening for Amy 1.0.4.
+
+- Added Food agent and Label agent image flows with multi-photo upload.
+- Added serving-size and grams-based portion tracking for Open Food Facts barcode entries.
+- Added direct JSON download/import UX.
+- Polished weight trend stats.
+- Bumped Android release metadata to versionName 1.0.4 and versionCode 6.

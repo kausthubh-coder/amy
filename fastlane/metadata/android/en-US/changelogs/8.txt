@@ -1,0 +1,8 @@
+Amy 1.0.6 fixes daily logging, widgets, and stats polish.
+
+- Photo and prompt captures now add a visible note line while logging calories.
+- Streaks now show current contiguous streak separately from total logged days.
+- Stats and Streaks use a cleaner single header with the two tabs at the top.
+- Streaks now show today eaten, week total, and macro totals against goals.
+- Macro progress circles now render real progress with distinct macro colors.
+- Android widgets now use consistent fire calorie language and improved resize metadata.

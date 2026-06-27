@@ -27,6 +27,7 @@ import { ModalShell } from "../components/ModalShell";
 import { MacroRing, ProgressBar } from "../components/NutritionBits";
 import { formatPortionLabel, macrosForPortion, portionGrams, targetsFromCalories, totalsForDay } from "../domain/nutrition";
 import { createId } from "../domain/seed";
+import { currentStreakDays } from "../domain/streaks";
 import { FoodDraft, FoodEntry, FoodPortion, MacroTotals, PortionUnit } from "../domain/types";
 import { feedback } from "../services/feedback";
 import { getLocationContext } from "../services/location";
@@ -492,6 +493,7 @@ export function TodayScreen({
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [calorieOverlayVisible, setCalorieOverlayVisible] = useState(false);
   const [lineHeights, setLineHeights] = useState<Record<string, number>>({});
+  const [noteScrollY, setNoteScrollY] = useState(0);
   const inputRef = useRef<TextInput>(null);
   const lastPrefillRef = useRef("");
   const lastDictationSignalRef = useRef(0);
@@ -515,7 +517,7 @@ export function TodayScreen({
   const note = data?.dayNotes.find((item) => item.day === selectedDay)?.text ?? "";
   const entries = useMemo(() => data?.entries.filter((entry) => entry.day === selectedDay) ?? [], [data?.entries, selectedDay]);
   const totals = useMemo(() => (data ? totalsForDay(data.entries, selectedDay) : { calories: 0, carbs: 0, protein: 0, fat: 0 }), [data, selectedDay]);
-  const loggedDayCount = useMemo(() => new Set((data?.entries ?? []).map((entry) => entry.day)).size, [data?.entries]);
+  const streakCount = useMemo(() => currentStreakDays(data?.entries ?? [], selectedDay), [data?.entries, selectedDay]);
   const lineRows = useMemo(() => buildLineRows(workingText, entries, lineStatuses), [entries, lineStatuses, workingText]);
   const editingEntry = useMemo(() => entries.find((entry) => entry.id === editingEntryId), [editingEntryId, entries]);
   const keyboardDockOffset =
@@ -545,6 +547,7 @@ export function TodayScreen({
     setWorkingText(note);
     setLineStatuses({});
     setLineHeights({});
+    setNoteScrollY(0);
     setNotice("");
     setEditingEntryId(null);
     setCalorieOverlayVisible(false);
@@ -552,10 +555,22 @@ export function TodayScreen({
 
   useEffect(() => {
     if (note === externalNoteRef.current) return;
-    externalNoteRef.current = note;
-    if (inputFocused || listening || note === workingTextRef.current) return;
+    const previousExternalNote = externalNoteRef.current;
+    if (note === workingTextRef.current) return;
+
+    let nextText = note;
+    if (inputFocused || listening) {
+      const current = workingTextRef.current.trimEnd();
+      const previous = previousExternalNote.trimEnd();
+      const appended = previous && note.startsWith(`${previous}\n`) ? note.slice(previous.length + 1).trimEnd() : !previous ? note.trimEnd() : "";
+      if (!appended) return;
+      nextText = current ? `${current}\n${appended}` : appended;
+    }
+
+    externalNoteRef.current = nextText;
+    if (nextText === workingTextRef.current) return;
     animateLayout();
-    setWorkingText(note);
+    setWorkingText(nextText);
   }, [inputFocused, listening, note]);
 
   useEffect(() => {
@@ -918,11 +933,11 @@ export function TodayScreen({
 	        <InteractivePressable onPress={() => shiftDay(0)} style={styles.todayPill}>
 	          <Text style={styles.todayText}>{labelForDay(selectedDay)}</Text>
 	        </InteractivePressable>
-	        <View style={styles.topActions}>
-	          <InteractivePressable onPress={() => openModal("stats")} style={styles.streakPill}>
-	            <Flame size={20} color={colors.orange} fill={colors.orange} strokeWidth={2.2} />
-	            <Text style={styles.streakText}>{loggedDayCount}</Text>
-	          </InteractivePressable>
+		        <View style={styles.topActions}>
+		          <InteractivePressable onPress={() => openModal("stats")} style={styles.streakPill}>
+		            <Flame size={20} color={colors.orange} fill={colors.orange} strokeWidth={2.2} />
+		            <Text style={styles.streakText}>{streakCount}</Text>
+		          </InteractivePressable>
 	          <InteractivePressable onPress={() => openModal("settings")} style={styles.settingsPill}>
 	            <Settings size={22} color={colors.ink} strokeWidth={2.5} />
 	          </InteractivePressable>
@@ -945,11 +960,12 @@ export function TodayScreen({
               if (dockBlurTimerRef.current) clearTimeout(dockBlurTimerRef.current);
               dockBlurTimerRef.current = setTimeout(() => setInputFocused(false), 180);
             }}
-            multiline
-            placeholder="Start logging your meals..."
-            placeholderTextColor={colors.dim}
-            style={styles.noteInput}
-          />
+	            multiline
+	            onScroll={(event) => setNoteScrollY(event.nativeEvent.contentOffset.y)}
+	            placeholder="Start logging your meals..."
+	            placeholderTextColor={colors.dim}
+	            style={styles.noteInput}
+	          />
 
           <View pointerEvents="none" style={styles.measureLayer}>
             {lineRows.map((row) => (
@@ -963,7 +979,7 @@ export function TodayScreen({
             ))}
           </View>
 
-          <View style={styles.lineRail}>
+	          <View style={[styles.lineRail, { transform: [{ translateY: -noteScrollY }] }]}>
             {lineRows.map((row) => {
               const activePhase = row.status?.phase && row.status.phase !== "done" ? row.status.phase : undefined;
               const label = activePhase ? phaseText[activePhase] : row.entry ? `${row.entry.macros.calories.toLocaleString()} cal` : "";
@@ -1012,9 +1028,9 @@ export function TodayScreen({
           </View>
           <ProgressBar value={calorieProgress} />
           <View style={styles.overlayRings}>
-            <MacroRing label="Carbs" value={totals.carbs} target={data.goal.carbsTarget} color={colors.green} />
-            <MacroRing label="Protein" value={totals.protein} target={data.goal.proteinTarget} color={colors.pink} />
-            <MacroRing label="Fat" value={totals.fat} target={data.goal.fatTarget} color={colors.green} />
+	            <MacroRing label="Carbs" value={totals.carbs} target={data.goal.carbsTarget} color={colors.pink} />
+	            <MacroRing label="Protein" value={totals.protein} target={data.goal.proteinTarget} color={colors.blue} />
+	            <MacroRing label="Fat" value={totals.fat} target={data.goal.fatTarget} color={colors.yellow} />
           </View>
         </View>
       ) : null}

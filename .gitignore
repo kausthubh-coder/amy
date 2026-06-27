@@ -1,10 +1,10 @@
 node_modules/
 .expo/
 dist/
-android/
-ios/
-artifacts/
-builds/
+/android/
+/ios/
+/artifacts/
+/builds/
 /screenshots/
 .DS_Store
 amy-*.png

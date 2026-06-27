@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Amy Logging, Widget, and Stats Fix Plan</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #111; color: #f5f5f5; line-height: 1.55; }
+    main { max-width: 920px; margin: 0 auto; padding: 32px 20px 48px; }
+    h1 { margin: 0 0 8px; font-size: 30px; }
+    h2 { margin-top: 28px; font-size: 20px; }
+    p, li { color: #d4d4d8; }
+    code { color: #fff; background: #242426; padding: 2px 6px; border-radius: 6px; }
+    .meta { color: #a1a1aa; font-size: 14px; }
+    .card { border: 1px solid #333338; background: #1d1d20; border-radius: 14px; padding: 18px; margin-top: 16px; }
+    a { color: #7dd3fc; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Amy Logging, Widget, and Stats Fix Plan</h1>
+    <div class="meta">
+      Artifact type: Oracle plan<br />
+      Run ID: 20260627-0102-amy-logging-widget-stats<br />
+      Date: June 27, 2026 01:02 AM EDT<br />
+      Project root: <code>/Users/kaust/Documents/amy</code><br />
+      Conclusion target: <code>.artifacts/conclusions/20260627-0102-amy-logging-widget-stats-conclusion.html</code>
+    </div>
+
+    <section class="card">
+      <h2>Goal</h2>
+      <p>Fix the user-reported Amy regressions shown in the attached screenshots: photo+prompt should add a visible log line, widgets should use the same calorie fire language and resize sanely, macro progress should show real progress instead of green-only states, streaks should represent contiguous streaks instead of total logged days, Stats/Streaks should have simpler top navigation, streak details should show actual eaten totals, and Today note calories should stay aligned while scrolling/editing.</p>
+    </section>
+
+    <section class="card">
+      <h2>Current Findings</h2>
+      <ul>
+        <li><code>CaptureModal</code> logs image estimates through <code>addEntryFromDraft</code>; the store appends a note line but skips duplicates, so a caption matching an existing typed line can count calories without changing visible text.</li>
+        <li><code>StatsModal</code> uses <code>activeDays.size</code>, which counts all logged days, not a break-sensitive streak.</li>
+        <li>The Stats modal content starts with another title-like Stats tab below the modal shell header, creating the duplicate title/X/tabs layout in the screenshot.</li>
+        <li><code>MacroRing</code> only changes the border when progress exceeds 80%, so rings look broken and mostly inactive.</li>
+        <li>Today's note input and calorie rail are separate absolute layers. The input scrolls internally on longer notes, while the rail does not, causing misalignment.</li>
+        <li>The widget XML uses fixed icon/action widths and emoji glyphs. It sets resize metadata but the layouts do not adapt well to smaller widget sizes.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Implementation Split</h2>
+      <ul>
+        <li>Main thread: create artifacts, patch shared store behavior, Today alignment, stats/streaks UI, macro rings, widget plugin, and release/build prep.</li>
+        <li>Background audit A: read-only review of photo/gallery logging and prompt-to-line behavior.</li>
+        <li>Background audit B: read-only review of Android widget emoji/resize/deep-link behavior.</li>
+        <li>Background audit C: read-only review of Stats/Streaks, macro progress, streak semantics, and Today row alignment.</li>
+      </ul>
+      <p>The environment exposes private multi-agent tools, not the user-visible Codex app thread API described by Oracle. Parallel review is still being done with separate agents and integrated in this orchestrator thread.</p>
+    </section>
+
+    <section class="card">
+      <h2>Planned Changes</h2>
+      <ul>
+        <li>Add an explicit store helper for adding image/barcode/saved entries while ensuring the note line appears even if it duplicates an existing line.</li>
+        <li>Make the Today note input non-scrollable and align the calorie rail with measured wrapped line heights.</li>
+        <li>Compute current contiguous streak from today/selected day backward, show total logged days separately, and show consumed/goal summaries in Streaks.</li>
+        <li>Move Stats/Streaks tabs into the modal title area by making the modal shell title neutral and letting the segment lead the sheet content.</li>
+        <li>Replace static macro ring borders with SVG progress rings and distinct macro colors.</li>
+        <li>Update widget layouts to use the flame calorie marker consistently, use consumed labels with units, reduce fixed widths, add min/max resize hints, and keep action cells compact.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Verification Strategy</h2>
+      <ul>
+        <li>Run <code>npm test</code> for TypeScript.</li>
+        <li>Run <code>npm run check:deps</code> and <code>npx expo-doctor</code> for release sanity.</li>
+        <li>Run Android prebuild in a temp/generated native path and inspect widget XML/manifest outputs.</li>
+        <li>Install and smoke-test on an Android emulator if available; use Computer Use for visible app checks where the emulator UI is reachable.</li>
+        <li>Prepare a local APK and attempt an EAS preview build submission using the configured Expo project if credentials are available.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

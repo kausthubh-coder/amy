@@ -1,11 +1,11 @@
 .git/
 .expo/
 node_modules/
-android/
-ios/
-artifacts/
-builds/
-screenshots/
+/android/
+/ios/
+/artifacts/
+/builds/
+/screenshots/
 *.apk
 *.aab
 *.log

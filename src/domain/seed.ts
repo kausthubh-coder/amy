@@ -1,3 +1,4 @@
+import { integrationConfig } from "../config/integrations";
 import { toDateKey } from "../utils/date";
 import { AmyLocalData, SavedMeal } from "./types";
 import { targetsFromCalories } from "./nutrition";
@@ -44,7 +45,7 @@ export function seedLocalData(): AmyLocalData {
       locationForRestaurants: false,
       reminders: false,
       dictationLanguage: "auto",
-      openRouterModel: "google/gemini-3.5-flash",
+      openRouterModel: integrationConfig.openRouter.defaultModel,
       openRouterKey: ""
     },
     entries: [],

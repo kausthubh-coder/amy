@@ -1,0 +1,5 @@
+Release-readiness metadata for Amy 1.0.5.
+
+- Added privacy notes, third-party notices, and catalog metadata.
+- Cleaned Expo app config validation issues.
+- Documented source-available licensing and release signing expectations.

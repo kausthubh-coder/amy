@@ -10,12 +10,14 @@ export function ModalShell({
   visible,
   title,
   titleIcon,
+  headerContent,
   children,
   onClose
 }: {
   visible: boolean;
   title?: string;
   titleIcon?: ReactNode;
+  headerContent?: ReactNode;
   children: ReactNode;
   onClose: () => void;
 }) {
@@ -27,8 +29,10 @@ export function ModalShell({
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.avoider}>
         <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 10) }]}>
           <View style={styles.handle} />
-          <View style={[styles.header, !title && styles.headerNoTitle]}>
-            {title ? (
+          <View style={[styles.header, !title && !headerContent && styles.headerNoTitle]}>
+            {headerContent ? (
+              <View style={styles.headerCustom}>{headerContent}</View>
+            ) : title ? (
               <View style={styles.headerTitle}>
                 {titleIcon ? <View style={styles.titleIcon}>{titleIcon}</View> : null}
                 <Text style={styles.title}>{title}</Text>
@@ -91,6 +95,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
+    paddingRight: 12
+  },
+  headerCustom: {
+    flex: 1,
+    minWidth: 0,
     paddingRight: 12
   },
   titleIcon: {

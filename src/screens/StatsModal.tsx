@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import Svg, { Circle, Line, Polyline } from "react-native-svg";
 
 import { InteractivePressable } from "../components/InteractivePressable";
 import { totalsForDay } from "../domain/nutrition";
+import { currentStreakDays, totalLoggedDays } from "../domain/streaks";
 import { WeightLog } from "../domain/types";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
@@ -17,8 +18,40 @@ function Bar({ value, target, color }: { value: number; target: number; color: s
   return <View style={[styles.bar, { height, backgroundColor: color }]} />;
 }
 
+export type StatsTab = "stats" | "streaks";
+
+export function StatsTabs({
+  tab,
+  onTabChange,
+  streakCount
+}: {
+  tab: StatsTab;
+  onTabChange: (tab: StatsTab) => void;
+  streakCount: number;
+}) {
+  return (
+    <View style={styles.segment}>
+      <InteractivePressable onPress={() => onTabChange("stats")} style={[styles.segmentButton, tab === "stats" && styles.segmentOn]}>
+        <Text style={[styles.segmentText, tab === "stats" && styles.segmentTextOn]}>Stats</Text>
+      </InteractivePressable>
+      <InteractivePressable onPress={() => onTabChange("streaks")} style={[styles.segmentButton, tab === "streaks" && styles.segmentOn]}>
+        <Text style={[styles.segmentText, tab === "streaks" && styles.segmentTextOn]}>Streaks 🔥 {streakCount}</Text>
+      </InteractivePressable>
+    </View>
+  );
+}
+
 function formatWeight(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function formatMacro(value: number) {
+  return Math.round(value).toLocaleString();
+}
+
+function daysInSelectedMonth(selectedDay: string) {
+  const date = dateFromKey(selectedDay);
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
 }
 
 function trendSummary(logs: WeightLog[], goal: number) {
@@ -67,28 +100,33 @@ function trendSummary(logs: WeightLog[], goal: number) {
   };
 }
 
-export function StatsModal() {
+export function StatsModal({ tab }: { tab: StatsTab }) {
   const { data, selectedDay } = useAppData();
-  const [tab, setTab] = useState<"stats" | "streaks">("stats");
   const days = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(selectedDay, index - dateFromKey(selectedDay).getDay())), [selectedDay]);
   if (!data) return null;
 
   const activeDays = new Set(data.entries.map((entry) => entry.day));
+  const streakCount = currentStreakDays(data.entries, selectedDay);
+  const loggedDaysCount = totalLoggedDays(data.entries);
+  const selectedTotals = totalsForDay(data.entries, selectedDay);
+  const weekTotals = days.reduce(
+    (sum, day) => {
+      const total = totalsForDay(data.entries, day);
+      return {
+        calories: sum.calories + total.calories,
+        protein: sum.protein + total.protein,
+        carbs: sum.carbs + total.carbs,
+        fat: sum.fat + total.fat
+      };
+    },
+    { calories: 0, protein: 0, carbs: 0, fat: 0 }
+  );
   const weightTrend = trendSummary(data.weightLogs, data.goal.weightGoalLbs);
   const weightDeltaLabel =
     weightTrend.delta === 0 ? "No change" : `${weightTrend.delta > 0 ? "+" : ""}${formatWeight(weightTrend.delta)} lbs`;
 
   return (
     <View style={styles.stack}>
-      <View style={styles.segment}>
-        <InteractivePressable onPress={() => setTab("stats")} style={[styles.segmentButton, tab === "stats" && styles.segmentOn]}>
-          <Text style={[styles.segmentText, tab === "stats" && styles.segmentTextOn]}>Stats</Text>
-        </InteractivePressable>
-        <InteractivePressable onPress={() => setTab("streaks")} style={[styles.segmentButton, tab === "streaks" && styles.segmentOn]}>
-          <Text style={[styles.segmentText, tab === "streaks" && styles.segmentTextOn]}>Streaks 🔥 {activeDays.size}</Text>
-        </InteractivePressable>
-      </View>
-
       {tab === "stats" ? (
         <>
           <Text style={styles.week}>{weekRangeLabel(selectedDay)}</Text>
@@ -98,20 +136,23 @@ export function StatsModal() {
             { label: "Carbs", field: "carbs" as const, color: colors.pink, target: data.goal.carbsTarget },
             { label: "Fat", field: "fat" as const, color: "#E35BFF", target: data.goal.fatTarget }
 	          ].map((metric) => (
-	            <View key={metric.label} style={styles.chartCard}>
-              <View style={styles.chartHeader}>
-                <Text style={styles.chartTitle}>{metric.label}</Text>
-                <Text style={styles.chartAvg}>Goal {Math.round(metric.target)}</Text>
-              </View>
-              <View style={styles.chart}>
-                {days.map((day) => {
+		            <View key={metric.label} style={styles.chartCard}>
+	              <View style={styles.chartHeader}>
+	                <Text style={styles.chartTitle}>{metric.label}</Text>
+	                <Text style={styles.chartAvg}>
+                    Week {formatMacro(weekTotals[metric.field])} / Goal {Math.round(metric.target)}
+                  </Text>
+	              </View>
+	              <View style={styles.chart}>
+	                {days.map((day) => {
                   const total = totalsForDay(data.entries, day);
                   return (
-                    <View key={day} style={styles.barSlot}>
-                      <Bar value={total[metric.field]} target={metric.target} color={metric.color} />
-                      <Text style={styles.dayLabel}>{dateFromKey(day).toLocaleDateString(undefined, { weekday: "narrow" })}</Text>
-                    </View>
-                  );
+	                    <View key={day} style={styles.barSlot}>
+	                      <Bar value={total[metric.field]} target={metric.target} color={metric.color} />
+                        <Text style={styles.barValue}>{formatMacro(total[metric.field])}</Text>
+	                      <Text style={styles.dayLabel}>{dateFromKey(day).toLocaleDateString(undefined, { weekday: "narrow" })}</Text>
+	                    </View>
+	                  );
                 })}
               </View>
 	            </View>
@@ -167,11 +208,40 @@ export function StatsModal() {
       ) : (
         <>
           <View style={styles.flameCard}>
-            <Text style={styles.bigFlame}>{activeDays.size}</Text>
-            <Text style={styles.flameText}>{activeDays.size === 1 ? "day" : "days"} logged</Text>
+            <Text style={styles.bigFlame}>{streakCount}</Text>
+            <Text style={styles.flameText}>{streakCount === 1 ? "day" : "days"} current streak</Text>
+            <Text style={styles.flameSubtext}>{loggedDaysCount} total logged {loggedDaysCount === 1 ? "day" : "days"}</Text>
+          </View>
+          <View style={styles.summaryGrid}>
+            <View style={styles.summaryTile}>
+              <Text style={styles.summaryLabel}>Today eaten</Text>
+              <Text style={styles.summaryValue}>
+                {formatMacro(selectedTotals.calories)} / {data.goal.dailyCalories.toLocaleString()}
+              </Text>
+              <Text style={styles.summaryHint}>calories</Text>
+            </View>
+            <View style={styles.summaryTile}>
+              <Text style={styles.summaryLabel}>This week</Text>
+              <Text style={styles.summaryValue}>{formatMacro(weekTotals.calories)}</Text>
+              <Text style={styles.summaryHint}>calories</Text>
+            </View>
+          </View>
+          <View style={styles.macroSummary}>
+            <View style={styles.macroSummaryItem}>
+              <Text style={[styles.macroSummaryValue, { color: colors.pink }]}>{formatMacro(selectedTotals.carbs)}</Text>
+              <Text style={styles.macroSummaryLabel}>Carbs / {data.goal.carbsTarget}</Text>
+            </View>
+            <View style={styles.macroSummaryItem}>
+              <Text style={[styles.macroSummaryValue, { color: colors.blue }]}>{formatMacro(selectedTotals.protein)}</Text>
+              <Text style={styles.macroSummaryLabel}>Protein / {data.goal.proteinTarget}</Text>
+            </View>
+            <View style={styles.macroSummaryItem}>
+              <Text style={[styles.macroSummaryValue, { color: colors.yellow }]}>{formatMacro(selectedTotals.fat)}</Text>
+              <Text style={styles.macroSummaryLabel}>Fat / {data.goal.fatTarget}</Text>
+            </View>
           </View>
           <View style={styles.calendar}>
-            {Array.from({ length: 30 }, (_, index) => index + 1).map((day) => {
+            {Array.from({ length: daysInSelectedMonth(selectedDay) }, (_, index) => index + 1).map((day) => {
               const date = new Date(dateFromKey(selectedDay));
               date.setDate(day);
               const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
@@ -182,9 +252,6 @@ export function StatsModal() {
                 </View>
               );
             })}
-          </View>
-          <View style={styles.repairRow}>
-            <Text style={styles.repairText}>🚧 3 repairs available</Text>
           </View>
         </>
       )}
@@ -197,14 +264,14 @@ const styles = StyleSheet.create({
     gap: 16
   },
   segment: {
-    alignSelf: "center",
     flexDirection: "row",
     padding: 5,
     borderRadius: 999,
     backgroundColor: colors.panel2
   },
   segmentButton: {
-    minWidth: 128,
+    flex: 1,
+    minWidth: 106,
     height: 46,
     alignItems: "center",
     justifyContent: "center",
@@ -237,17 +304,22 @@ const styles = StyleSheet.create({
   },
   chartHeader: {
     flexDirection: "row",
-    justifyContent: "space-between"
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10
   },
   chartTitle: {
+    flex: 1,
     color: colors.ink,
     fontSize: 23,
     fontWeight: "900"
   },
   chartAvg: {
+    maxWidth: 148,
     color: colors.muted,
     fontSize: 15,
-    fontWeight: "900"
+    fontWeight: "900",
+    textAlign: "right"
   },
   chart: {
     height: 170,
@@ -257,7 +329,7 @@ const styles = StyleSheet.create({
   },
   barSlot: {
     alignItems: "center",
-    gap: 9
+    gap: 6
   },
   bar: {
     width: 34,
@@ -265,6 +337,12 @@ const styles = StyleSheet.create({
   },
   dayLabel: {
     color: colors.muted,
+    fontWeight: "900"
+  },
+  barValue: {
+    minHeight: 16,
+    color: colors.ink,
+    fontSize: 11,
     fontWeight: "900"
   },
   weightStats: {
@@ -347,6 +425,66 @@ const styles = StyleSheet.create({
     fontSize: 23,
     fontWeight: "900"
   },
+  flameSubtext: {
+    marginTop: 6,
+    color: colors.ink,
+    fontSize: 16,
+    fontWeight: "900"
+  },
+  summaryGrid: {
+    flexDirection: "row",
+    gap: 12
+  },
+  summaryTile: {
+    flex: 1,
+    minHeight: 104,
+    borderRadius: 22,
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.line,
+    padding: 16,
+    justifyContent: "center"
+  },
+  summaryLabel: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "900"
+  },
+  summaryValue: {
+    marginTop: 6,
+    color: colors.ink,
+    fontSize: 23,
+    fontWeight: "900"
+  },
+  summaryHint: {
+    color: colors.dim,
+    fontSize: 13,
+    fontWeight: "800"
+  },
+  macroSummary: {
+    flexDirection: "row",
+    gap: 10,
+    borderRadius: 22,
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.line,
+    padding: 14
+  },
+  macroSummaryItem: {
+    flex: 1,
+    alignItems: "center",
+    gap: 4
+  },
+  macroSummaryValue: {
+    fontSize: 23,
+    fontWeight: "900"
+  },
+  macroSummaryLabel: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "900",
+    textAlign: "center"
+  },
   calendar: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -377,14 +515,4 @@ const styles = StyleSheet.create({
   calendarTextOn: {
     color: colors.bg
   },
-  repairRow: {
-    borderRadius: 22,
-    backgroundColor: colors.panel,
-    padding: 20
-  },
-  repairText: {
-    color: colors.ink,
-    fontSize: 20,
-    fontWeight: "900"
-  }
 });

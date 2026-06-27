@@ -7,11 +7,12 @@ import { ModalShell } from "./src/components/ModalShell";
 import { LocalDataProvider, useAppData } from "./src/store/AppDataContext";
 import { colors } from "./src/theme";
 import { CaptureModal } from "./src/screens/CaptureModal";
+import { currentStreakDays } from "./src/domain/streaks";
 import { CaptureMode, AppModal, TodayScreen } from "./src/screens/TodayScreen";
 import { OnboardingScreen } from "./src/screens/OnboardingScreen";
 import { SavedMealsModal } from "./src/screens/SavedMealsModal";
 import { SettingsModal } from "./src/screens/SettingsModal";
-import { StatsModal } from "./src/screens/StatsModal";
+import { StatsModal, StatsTabs, StatsTab } from "./src/screens/StatsModal";
 
 function routeFromUrl(
   url: string
@@ -46,9 +47,10 @@ function routeFromUrl(
 }
 
 function AppBody() {
-  const { ready, data } = useAppData();
+  const { ready, data, selectedDay } = useAppData();
   const [activeModal, setActiveModal] = useState<AppModal>(null);
   const [captureMode, setCaptureMode] = useState<CaptureMode>("photo");
+  const [statsTab, setStatsTab] = useState<StatsTab>("stats");
   const [focusSignal, setFocusSignal] = useState(0);
   const [dictationSignal, setDictationSignal] = useState(0);
   const [prefillText, setPrefillText] = useState("");
@@ -62,6 +64,7 @@ function AppBody() {
     ) : (
       <Camera size={28} color="#F141FF" strokeWidth={2.5} />
     );
+  const statsStreakCount = data ? currentStreakDays(data.entries, selectedDay) : 0;
 
   const focusTypeInput = useCallback((text?: string) => {
     setPrefillText(text ?? "");
@@ -112,8 +115,12 @@ function AppBody() {
       <ModalShell visible={activeModal === "saved"} title="Saved Meals" onClose={() => setActiveModal(null)}>
         <SavedMealsModal onDone={() => setActiveModal(null)} />
       </ModalShell>
-      <ModalShell visible={activeModal === "stats"} title="Stats" onClose={() => setActiveModal(null)}>
-        <StatsModal />
+      <ModalShell
+        visible={activeModal === "stats"}
+        headerContent={<StatsTabs tab={statsTab} onTabChange={setStatsTab} streakCount={statsStreakCount} />}
+        onClose={() => setActiveModal(null)}
+      >
+        <StatsModal tab={statsTab} />
       </ModalShell>
       <ModalShell visible={activeModal === "settings"} title="Settings" onClose={() => setActiveModal(null)}>
         <SettingsModal />
