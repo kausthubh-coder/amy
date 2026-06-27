@@ -62,7 +62,7 @@ function AppBody() {
     ) : captureMode === "label" ? (
       <Tags size={28} color={colors.pink} strokeWidth={2.5} />
     ) : (
-      <Camera size={28} color="#F141FF" strokeWidth={2.5} />
+      <Camera size={28} color={colors.pink} strokeWidth={2.5} />
     );
   const statsStreakCount = data ? currentStreakDays(data.entries, selectedDay) : 0;
 

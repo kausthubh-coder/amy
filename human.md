@@ -80,4 +80,4 @@ OpenRouter keys are user-entered in Settings and stored locally. Do not commit r
 
 ## Last Meaningful Oracle Update
 
-2026-06-27: Oracle pass for photo note-line visibility, widget fire/resize consistency, macro progress rings, contiguous streak semantics, Stats/Streaks header cleanup, streak detail totals, Today calorie rail scroll alignment, and Android 1.0.6/versionCode 8 build prep. Evidence is in `.artifacts/plans/20260627-0102-amy-logging-widget-stats-plan.html` and `.artifacts/conclusions/20260627-0102-amy-logging-widget-stats-conclusion.html`.
+2026-06-27: Oracle pass for notes/calorie row alignment, floating Today header controls, Food/Label photo sheet polish, Stats daily-average labels, Goals & Targets macro clarity, Local Data redesign, mini Today widget quick-log resize metadata, and Android 1.0.7/versionCode 9 release prep. Evidence is in `.artifacts/plans/20260627-0229-amy-notes-capture-stats-widget-plan.html` and `.artifacts/conclusions/20260627-0229-amy-notes-capture-stats-widget-conclusion.html`.

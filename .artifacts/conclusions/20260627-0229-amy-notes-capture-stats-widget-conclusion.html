@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Amy Notes, Capture, Stats, Widget Release Conclusion</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #101012; color: #f5f5f5; line-height: 1.55; }
+    main { max-width: 980px; margin: 0 auto; padding: 32px 20px 56px; }
+    h1 { margin: 0 0 8px; font-size: 30px; }
+    h2 { margin-top: 28px; font-size: 20px; }
+    p, li { color: #d4d4d8; }
+    code { color: #fff; background: #26262a; padding: 2px 6px; border-radius: 6px; }
+    .meta { color: #a1a1aa; font-size: 14px; }
+    .card { border: 1px solid #34343a; background: #1c1c20; border-radius: 14px; padding: 18px; margin-top: 16px; }
+    .ok { color: #4ade80; font-weight: 700; }
+    .warn { color: #facc15; font-weight: 700; }
+    a { color: #7dd3fc; }
+    img { width: 100%; max-width: 360px; border: 1px solid #34343a; border-radius: 12px; background: #000; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; align-items: start; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Amy Notes, Capture, Stats, Widget Release Conclusion</h1>
+    <div class="meta">
+      Artifact type: Oracle conclusion<br />
+      Run ID: 20260627-0229-amy-notes-capture-stats-widget<br />
+      Date: June 27, 2026 03:05 AM EDT<br />
+      Project root: <code>/Users/kaust/Documents/amy</code><br />
+      Plan: <a href="../plans/20260627-0229-amy-notes-capture-stats-widget-plan.html">20260627-0229-amy-notes-capture-stats-widget-plan.html</a><br />
+      Human guide: <code>/Users/kaust/Documents/amy/human.md</code>
+    </div>
+
+    <section class="card">
+      <h2>Final Status</h2>
+      <p><span class="ok">Complete.</span> The requested Today notes/calorie alignment, floating header, Food agent sheet cleanup, Stats average labels, Goals & Targets clarity, Local Data redesign, widget quick-log behavior, emulator smoke, local native build, and release prep were completed for Amy 1.0.7.</p>
+    </section>
+
+    <section class="card">
+      <h2>What Changed</h2>
+      <ul>
+        <li>Today now keeps notes and calories in one aligned row-based scrolling surface, with floating logo/date/streak/settings controls above the log instead of cutting note rows at the top.</li>
+        <li>The dock has extra keyboard clearance, and icon-only controls gained accessibility labels/hints.</li>
+        <li>The Food agent sheet no longer repeats "Food agent" in the body. Meal/label photos now use a single capture panel with source buttons, empty state, preview strip, add/remove controls, and clearer disabled states.</li>
+        <li>Stats cards now show daily average against the goal, avoiding the old week-total-vs-daily-goal wording.</li>
+        <li>Goals & Targets now shows custom target status, goal type, saved vs pending calorie values, and macro target rows.</li>
+        <li>Local Data now separates export and import flows, shows local data counts, and explains private backup boundaries.</li>
+        <li>The mini Today widget is quick-log focused only and no longer displays what the user ate. Generated widget metadata supports horizontal and vertical resize with a 4x3 target.</li>
+        <li>Release metadata advanced to Amy 1.0.7 / Android versionCode 9, including Fastlane changelog 9.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Parallel Lanes</h2>
+      <ul>
+        <li>Mill <code>019f07c6-31ca-7e40-9e9a-73e118720dd2</code>: Today notes/calorie alignment, floating header, keyboard clearance.</li>
+        <li>Nash <code>019f07c6-323a-7200-babd-e44e4416d030</code>: Food/Label capture sheet cleanup and photo panel.</li>
+        <li>Ohm <code>019f07c6-3333-7ab1-85a9-9348d77f19cd</code>: Stats, Goals & Targets, Local Data.</li>
+        <li>Planck <code>019f07c6-33e6-7440-b094-7afd686fac63</code>: Android widget quick-log behavior and resize metadata.</li>
+        <li>Zeno <code>019f07cd-7151-76a2-9ee4-fcae86ee3bce</code>: Impeccable review lane, PASS with P2/P3 follow-ups.</li>
+        <li>Darwin <code>019f07d2-5d80-7052-a459-ea2f1f5111ce</code>: Settings/Stats follow-up polish from review findings.</li>
+        <li>Goodall <code>019f07d2-a846-7971-b3e4-c3d613c541fd</code>: Today/Capture accessibility and token follow-up polish.</li>
+      </ul>
+      <p>The user-requested Codex app thread creation API was not exposed in this environment. The orchestration used the available multi-agent worker tool instead and recorded that constraint in the plan.</p>
+    </section>
+
+    <section class="card">
+      <h2>Verification</h2>
+      <ul>
+        <li><code>npm test</code>: PASS, TypeScript <code>tsc --noEmit</code>.</li>
+        <li><code>npm run check:deps</code>: PASS, Expo dependencies up to date.</li>
+        <li><code>npx expo-doctor</code>: PASS, 21/21 checks passed.</li>
+        <li><code>git diff --check</code>: PASS.</li>
+        <li><code>node --check plugins/withAmyAndroidWidgets.js</code>: PASS.</li>
+        <li><code>npm run prebuild:android</code>: PASS.</li>
+        <li>Generated widget checks: Today widget XML has <code>resizeMode="horizontal|vertical"</code>, <code>targetCellWidth="4"</code>, <code>targetCellHeight="3"</code>, and quick-log copy only.</li>
+        <li>Local native Gradle build: PASS from <code>/private/tmp/amy-v1.0.7-build.WLA1AR</code>.</li>
+        <li><code>aapt2 dump badging builds/amy-1.0.7-release.apk</code>: PASS, package <code>com.kaust.amy</code>, versionName <code>1.0.7</code>, versionCode <code>9</code>.</li>
+        <li><code>apksigner verify --print-certs builds/amy-1.0.7-release.apk</code>: PASS, local Android debug certificate digest <code>fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c</code>.</li>
+        <li>Android emulator smoke: installed APK, launched <code>com.kaust.amy/.MainActivity</code>, opened <code>amy://capture/photo</code>, and opened <code>amy://stats</code>.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Build Artifact</h2>
+      <ul>
+        <li>Local APK: <code>/Users/kaust/Documents/amy/builds/amy-1.0.7-release.apk</code></li>
+        <li>SHA-256: <code>0b0d6db47801a699e7ddbb85d0e9edc5d3252354856184e16d2e061229c3df43</code></li>
+        <li>Size: 98 MB</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Demo Evidence</h2>
+      <div class="grid">
+        <figure>
+          <img src="../demos/20260627-0229-amy-notes-capture-stats-widget/emulator-amy-107-launch.png" alt="Amy Today launch on Android emulator" />
+          <figcaption>Today launch with floating header and bottom dock.</figcaption>
+        </figure>
+        <figure>
+          <img src="../demos/20260627-0229-amy-notes-capture-stats-widget/emulator-amy-107-food-agent.png" alt="Amy Food agent sheet on Android emulator" />
+          <figcaption>Food agent sheet with one title and the new meal photo panel.</figcaption>
+        </figure>
+        <figure>
+          <img src="../demos/20260627-0229-amy-notes-capture-stats-widget/emulator-amy-107-stats.png" alt="Amy Stats modal on Android emulator" />
+          <figcaption>Stats modal with daily average against goal.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Known Limitations</h2>
+      <ul>
+        <li>Widget vertical resize was verified through generated metadata and provider code, not by dragging a launcher widget by hand.</li>
+        <li>Photo model responses were not proven with a live OpenRouter image call during emulator smoke testing; the UI path and type checks passed.</li>
+        <li>The local native APK is signed by the local Android debug certificate, matching the previous native local build style. It is suitable for direct GitHub APK distribution, not Play Store production signing.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

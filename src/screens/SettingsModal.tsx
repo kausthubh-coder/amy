@@ -2,6 +2,7 @@ import * as Clipboard from "expo-clipboard";
 import { File, Paths } from "expo-file-system";
 import { StorageAccessFramework } from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
+import { Copy, Download, FileText, Save, ShieldCheck, Upload } from "lucide-react-native";
 import React, { useMemo, useState } from "react";
 import { Platform, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 
@@ -69,6 +70,70 @@ function Row({
   );
 }
 
+function formatNumber(value: number) {
+  return Math.round(value).toLocaleString();
+}
+
+function formatWeight(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function numberFromInput(value: string, fallback: number) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
+}
+
+function goalStatus(currentWeight: number, goalWeight: number) {
+  const delta = currentWeight - goalWeight;
+  if (Math.abs(delta) < 0.5) {
+    return { type: "Maintain", status: "At target weight" };
+  }
+
+  if (delta > 0) {
+    return { type: "Weight loss", status: `${formatWeight(delta)} lb to lose` };
+  }
+
+  return { type: "Weight gain", status: `${formatWeight(Math.abs(delta))} lb to gain` };
+}
+
+function IconAction({
+  icon,
+  label,
+  onPress,
+  variant = "secondary",
+  grow = true,
+  disabled
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onPress: () => void;
+  variant?: "primary" | "secondary";
+  grow?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <InteractivePressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={[styles.actionButton, grow && styles.actionButtonGrow, variant === "primary" && styles.actionButtonPrimary]}
+    >
+      {icon}
+      <Text style={[styles.actionButtonText, variant === "primary" && styles.actionButtonTextPrimary]}>{label}</Text>
+    </InteractivePressable>
+  );
+}
+
+function DataCount({ label, value }: { label: string; value: number }) {
+  return (
+    <View style={styles.dataCount}>
+      <Text style={styles.dataCountValue}>{formatNumber(value)}</Text>
+      <Text style={styles.dataCountLabel}>{label}</Text>
+    </View>
+  );
+}
+
 export function SettingsModal() {
   const { data, selectedDay, updateGoal, updateSettings, logWeight, exportText, importText } = useAppData();
   const [calories, setCalories] = useState(String(data?.goal.dailyCalories ?? 2632));
@@ -78,17 +143,30 @@ export function SettingsModal() {
   const [openRouterKey, setOpenRouterKey] = useState(data?.settings.openRouterKey ?? "");
   const [openRouterModel, setOpenRouterModel] = useState(data?.settings.openRouterModel ?? integrationConfig.openRouter.defaultModel);
   const [importValue, setImportValue] = useState("");
+  const [showPasteImport, setShowPasteImport] = useState(false);
   const [notice, setNotice] = useState("");
 
-  const macroTargets = useMemo(() => targetsFromCalories(Number(calories) || data?.goal.dailyCalories || 2632), [calories, data?.goal.dailyCalories]);
+  const pendingCalories = numberFromInput(calories, data?.goal.dailyCalories ?? 2632);
+  const macroTargets = useMemo(() => targetsFromCalories(pendingCalories), [pendingCalories]);
 
   if (!data) return null;
 
+  const pendingCurrentWeight = numberFromInput(currentWeight, data.goal.currentWeightLbs);
+  const pendingGoalWeight = numberFromInput(goalWeight, data.goal.weightGoalLbs);
+  const pendingStatus = goalStatus(pendingCurrentWeight, pendingGoalWeight);
+  const macroRows = [
+    { label: "Carbs", color: colors.pink, saved: data.goal.carbsTarget, pending: macroTargets.carbsTarget },
+    { label: "Protein", color: colors.blue, saved: data.goal.proteinTarget, pending: macroTargets.proteinTarget },
+    { label: "Fat", color: colors.yellow, saved: data.goal.fatTarget, pending: macroTargets.fatTarget }
+  ];
+  const macrosChanged = macroRows.some((macro) => macro.saved !== macro.pending);
+  const hasImportValue = importValue.trim().length > 0;
+
   const saveGoals = () => {
     updateGoal({
-      dailyCalories: Number(calories) || data.goal.dailyCalories,
-      currentWeightLbs: Number(currentWeight) || data.goal.currentWeightLbs,
-      weightGoalLbs: Number(goalWeight) || data.goal.weightGoalLbs
+      dailyCalories: pendingCalories,
+      currentWeightLbs: pendingCurrentWeight,
+      weightGoalLbs: pendingGoalWeight
     });
     setNotice("Goals saved.");
   };
@@ -168,7 +246,13 @@ export function SettingsModal() {
     }
   };
 
-  const applyImport = () => applyImportText(importValue);
+  const applyImport = () => {
+    if (!hasImportValue) {
+      setNotice("Paste a full Amy JSON export first.");
+      return;
+    }
+    applyImportText(importValue.trim());
+  };
 
   const importFile = async () => {
     try {
@@ -196,18 +280,59 @@ export function SettingsModal() {
   return (
     <View style={styles.stack}>
       <View style={styles.card}>
-        <Text style={styles.section}>Goals & Targets</Text>
-        <View style={styles.goalHeader}>
-          <Text style={styles.weight}>{data.goal.currentWeightLbs} lbs</Text>
-          <Text style={styles.goalLine}>🔥 {data.goal.dailyCalories.toLocaleString()} cal · P {data.goal.proteinTarget}g · C {data.goal.carbsTarget}g · F {data.goal.fatTarget}g</Text>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.section}>Goals & Targets</Text>
+          <View style={styles.statusPill}>
+            <Text style={styles.statusPillText}>{pendingStatus.type}</Text>
+          </View>
         </View>
-        <TextInput value={calories} onChangeText={setCalories} keyboardType="number-pad" placeholder="Calories" placeholderTextColor={colors.dim} style={styles.input} />
+
+        <View style={styles.goalSummary}>
+          <View style={styles.goalSummaryMain}>
+            <Text style={styles.goalKicker}>Custom daily target</Text>
+            <Text style={styles.weight}>🔥 {formatNumber(pendingCalories)}</Text>
+            <Text style={styles.goalLine}>Saved goal {formatNumber(data.goal.dailyCalories)} cal</Text>
+          </View>
+          <View style={styles.goalStatusBox}>
+            <Text style={styles.goalStatusType}>Goal status</Text>
+            <Text style={styles.goalStatusText}>{pendingStatus.status}</Text>
+          </View>
+        </View>
+
+        <View style={styles.fieldGroup}>
+          <Text style={styles.fieldLabel}>Daily calories</Text>
+          <TextInput value={calories} onChangeText={setCalories} keyboardType="number-pad" placeholder="Calories" placeholderTextColor={colors.muted} style={styles.input} />
+        </View>
         <View style={styles.twoCol}>
-          <TextInput value={currentWeight} onChangeText={setCurrentWeight} keyboardType="number-pad" placeholder="Current lbs" placeholderTextColor={colors.dim} style={styles.input} />
-          <TextInput value={goalWeight} onChangeText={setGoalWeight} keyboardType="number-pad" placeholder="Goal lbs" placeholderTextColor={colors.dim} style={styles.input} />
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>Current lbs</Text>
+            <TextInput value={currentWeight} onChangeText={setCurrentWeight} keyboardType="number-pad" placeholder="Current lbs" placeholderTextColor={colors.muted} style={styles.input} />
+          </View>
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>Goal lbs</Text>
+            <TextInput value={goalWeight} onChangeText={setGoalWeight} keyboardType="number-pad" placeholder="Goal lbs" placeholderTextColor={colors.muted} style={styles.input} />
+          </View>
         </View>
-        <Text style={styles.goalLine}>Targets if saved: C {macroTargets.carbsTarget} · P {macroTargets.proteinTarget} · F {macroTargets.fatTarget}</Text>
+        <View style={styles.macroTargetPanel}>
+          <View style={styles.macroTargetHeader}>
+            <Text style={styles.goalLine}>Macro targets</Text>
+            <Text style={styles.goalLine}>{macrosChanged ? "Pending after save" : "Current"}</Text>
+          </View>
+          {macroRows.map((macro) => (
+            <View key={macro.label} style={styles.macroTargetRow}>
+              <View style={styles.macroTargetName}>
+                <View style={[styles.macroDot, { backgroundColor: macro.color }]} />
+                <Text style={styles.macroTargetLabel}>{macro.label}</Text>
+              </View>
+              <View style={styles.macroTargetValues}>
+                <Text style={styles.macroTargetValue}>{macro.pending}g</Text>
+                <Text style={styles.macroTargetHint}>{macrosChanged ? `Saved ${macro.saved}g` : "Daily target"}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
         <InteractivePressable feedbackKind="success" onPress={saveGoals} style={styles.primaryButton}>
+          <Save size={18} color={colors.ink} strokeWidth={3} />
           <Text style={styles.primaryText}>Save goals</Text>
         </InteractivePressable>
       </View>
@@ -223,8 +348,8 @@ export function SettingsModal() {
             <Text style={styles.keyStateText}>{data.weightLogs.length}</Text>
           </View>
         </View>
-        <TextInput value={currentWeight} onChangeText={setCurrentWeight} keyboardType="number-pad" placeholder="Current lbs" placeholderTextColor={colors.dim} style={styles.input} />
-        <TextInput value={weightNote} onChangeText={setWeightNote} placeholder="Note, optional" placeholderTextColor={colors.dim} style={styles.input} />
+        <TextInput value={currentWeight} onChangeText={setCurrentWeight} keyboardType="number-pad" placeholder="Current lbs" placeholderTextColor={colors.muted} style={styles.input} />
+        <TextInput value={weightNote} onChangeText={setWeightNote} placeholder="Note, optional" placeholderTextColor={colors.muted} style={styles.input} />
         <InteractivePressable feedbackKind="success" onPress={saveWeightLog} style={styles.secondaryButton}>
           <Text style={styles.secondaryText}>Log weight</Text>
         </InteractivePressable>
@@ -253,7 +378,7 @@ export function SettingsModal() {
           autoCapitalize="none"
           autoCorrect={false}
           placeholder="sk-or-..."
-          placeholderTextColor={colors.dim}
+          placeholderTextColor={colors.muted}
           style={styles.input}
         />
         <TextInput
@@ -262,7 +387,7 @@ export function SettingsModal() {
           autoCapitalize="none"
           autoCorrect={false}
           placeholder={integrationConfig.openRouter.defaultModel}
-          placeholderTextColor={colors.dim}
+          placeholderTextColor={colors.muted}
           style={styles.input}
         />
         <InteractivePressable feedbackKind="edit" onPress={saveAiSettings} style={styles.secondaryButton}>
@@ -295,31 +420,65 @@ export function SettingsModal() {
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.section}>Local Data</Text>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.section}>Local Data</Text>
+          <View style={styles.statusPill}>
+            <Text style={styles.statusPillText}>On device</Text>
+          </View>
+        </View>
+        <View style={styles.dataCounts}>
+          <DataCount label="foods" value={data.entries.length} />
+          <DataCount label="saved" value={data.savedMeals.length} />
+          <DataCount label="weights" value={data.weightLogs.length} />
+        </View>
+        <View style={styles.safetyBox}>
+          <ShieldCheck size={20} color={colors.green} strokeWidth={2.6} />
+          <View style={styles.safetyCopy}>
+            <Text style={styles.safetyTitle}>Private backup</Text>
+            <Text style={styles.privacy}>Exports include meals, notes, goals, saved meals, and weight logs. OpenRouter keys and Android folder access are left out.</Text>
+          </View>
+        </View>
         <Text style={styles.privacy}>{privacyBoundary.localData}</Text>
         <Text style={styles.privacy}>{privacyBoundary.allowedCloud}</Text>
-        <View style={styles.exportActions}>
-          <InteractivePressable onPress={downloadExport} style={[styles.secondaryButton, styles.exportButton]}>
-            <Text style={styles.secondaryText}>Download JSON</Text>
-          </InteractivePressable>
-          <InteractivePressable onPress={copyExport} style={[styles.secondaryButton, styles.exportButton]}>
-            <Text style={styles.secondaryText}>Copy JSON</Text>
-          </InteractivePressable>
+        <View style={styles.dataSection}>
+          <Text style={styles.dataSectionTitle}>Export backup</Text>
+          <View style={styles.exportActions}>
+            <IconAction icon={<Download size={18} color={colors.ink} strokeWidth={3} />} label="Download" onPress={downloadExport} variant="primary" />
+            <IconAction icon={<Copy size={18} color={colors.ink} strokeWidth={3} />} label="Copy JSON" onPress={copyExport} />
+          </View>
+          <Text style={styles.dataHint}>{data.settings.androidExportDirectoryUri ? "Download folder saved for next time." : "Android will ask where to save the backup."}</Text>
         </View>
-        <InteractivePressable onPress={importFile} style={styles.secondaryButton}>
-          <Text style={styles.secondaryText}>Import file</Text>
-        </InteractivePressable>
-        <TextInput
-          value={importValue}
-          onChangeText={setImportValue}
-          multiline
-          placeholder="Paste Amy JSON export"
-          placeholderTextColor={colors.dim}
-          style={[styles.input, styles.importBox]}
-        />
-        <InteractivePressable onPress={applyImport} style={styles.secondaryButton}>
-          <Text style={styles.secondaryText}>Import pasted JSON</Text>
-        </InteractivePressable>
+        <View style={styles.dataSection}>
+          <Text style={styles.dataSectionTitle}>Import backup</Text>
+          <Text style={styles.warningText}>Import replaces the local Amy data on this device. Use a full Amy JSON export.</Text>
+          <View style={styles.exportActions}>
+            <IconAction icon={<Upload size={18} color={colors.ink} strokeWidth={3} />} label="Choose file" onPress={importFile} />
+            <IconAction
+              icon={<FileText size={18} color={colors.ink} strokeWidth={3} />}
+              label={showPasteImport ? "Hide paste" : "Paste JSON"}
+              onPress={() => setShowPasteImport((visible) => !visible)}
+            />
+          </View>
+        </View>
+        {showPasteImport ? (
+          <View style={styles.pastePanel}>
+            <TextInput
+              value={importValue}
+              onChangeText={setImportValue}
+              multiline
+              placeholder="Paste Amy JSON export"
+              placeholderTextColor={colors.muted}
+              style={[styles.input, styles.importBox]}
+            />
+            <IconAction
+              icon={<Upload size={18} color={colors.ink} strokeWidth={3} />}
+              label="Import pasted JSON"
+              onPress={applyImport}
+              grow={false}
+              disabled={!hasImportValue}
+            />
+          </View>
+        ) : null}
       </View>
 
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
@@ -344,8 +503,70 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "900"
   },
+  sectionHeader: {
+    minHeight: 34,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
+  },
+  statusPill: {
+    minHeight: 30,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  statusPillText: {
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: "900"
+  },
   goalHeader: {
     gap: 5
+  },
+  goalSummary: {
+    minHeight: 126,
+    borderRadius: 22,
+    padding: 15,
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 12,
+    backgroundColor: colors.panel2
+  },
+  goalSummaryMain: {
+    flex: 1,
+    justifyContent: "center",
+    minWidth: 0
+  },
+  goalKicker: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "900"
+  },
+  goalStatusBox: {
+    width: 116,
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    justifyContent: "center",
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  goalStatusType: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "900"
+  },
+  goalStatusText: {
+    marginTop: 5,
+    color: colors.ink,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "900"
   },
   weight: {
     color: colors.ink,
@@ -356,6 +577,16 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 14,
     fontWeight: "800"
+  },
+  fieldGroup: {
+    flex: 1,
+    minWidth: 0,
+    gap: 7
+  },
+  fieldLabel: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "900"
   },
   input: {
     minHeight: 54,
@@ -373,6 +604,8 @@ const styles = StyleSheet.create({
   primaryButton: {
     height: 54,
     borderRadius: 999,
+    flexDirection: "row",
+    gap: 8,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.purple
@@ -458,6 +691,56 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "900"
   },
+  macroTargetPanel: {
+    gap: 10,
+    borderRadius: 22,
+    padding: 14,
+    backgroundColor: colors.panel2
+  },
+  macroTargetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10
+  },
+  macroTargetRow: {
+    minHeight: 48,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    backgroundColor: colors.panel
+  },
+  macroTargetName: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9
+  },
+  macroDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 999
+  },
+  macroTargetLabel: {
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: "900"
+  },
+  macroTargetValues: {
+    alignItems: "flex-end"
+  },
+  macroTargetValue: {
+    color: colors.ink,
+    fontSize: 17,
+    fontWeight: "900"
+  },
+  macroTargetHint: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "800"
+  },
   weightSummary: {
     flexDirection: "row",
     alignItems: "center",
@@ -510,6 +793,98 @@ const styles = StyleSheet.create({
   },
   exportButton: {
     flex: 1
+  },
+  dataCounts: {
+    flexDirection: "row",
+    gap: 10
+  },
+  dataCount: {
+    flex: 1,
+    minHeight: 64,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.panel2
+  },
+  dataCountValue: {
+    color: colors.ink,
+    fontSize: 20,
+    fontWeight: "900"
+  },
+  dataCountLabel: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "900"
+  },
+  safetyBox: {
+    borderRadius: 20,
+    padding: 14,
+    flexDirection: "row",
+    gap: 12,
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  safetyCopy: {
+    flex: 1,
+    gap: 3
+  },
+  safetyTitle: {
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: "900"
+  },
+  dataSection: {
+    gap: 10,
+    borderTopWidth: 1,
+    borderColor: colors.line,
+    paddingTop: 13
+  },
+  dataSectionTitle: {
+    color: colors.ink,
+    fontSize: 17,
+    fontWeight: "900"
+  },
+  dataHint: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "800"
+  },
+  warningText: {
+    color: colors.orange,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "800"
+  },
+  actionButton: {
+    minHeight: 52,
+    borderRadius: 999,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  actionButtonGrow: {
+    flex: 1
+  },
+  actionButtonPrimary: {
+    backgroundColor: colors.purple,
+    borderColor: colors.purple
+  },
+  actionButtonText: {
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: "900"
+  },
+  actionButtonTextPrimary: {
+    color: colors.ink
+  },
+  pastePanel: {
+    gap: 10
   },
   importBox: {
     minHeight: 112,

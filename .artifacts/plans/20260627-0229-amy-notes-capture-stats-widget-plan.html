@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Amy Notes, Capture, Stats, Widget Polish Plan</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #101012; color: #f5f5f5; line-height: 1.55; }
+    main { max-width: 980px; margin: 0 auto; padding: 32px 20px 56px; }
+    h1 { margin: 0 0 8px; font-size: 30px; }
+    h2 { margin-top: 28px; font-size: 20px; }
+    p, li { color: #d4d4d8; }
+    code { color: #fff; background: #26262a; padding: 2px 6px; border-radius: 6px; }
+    .meta { color: #a1a1aa; font-size: 14px; }
+    .card { border: 1px solid #34343a; background: #1c1c20; border-radius: 14px; padding: 18px; margin-top: 16px; }
+    a { color: #7dd3fc; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Amy Notes, Capture, Stats, Widget Polish Plan</h1>
+    <div class="meta">
+      Artifact type: Oracle plan<br />
+      Run ID: 20260627-0229-amy-notes-capture-stats-widget<br />
+      Date: June 27, 2026 02:29 AM EDT<br />
+      Project root: <code>/Users/kaust/Documents/amy</code><br />
+      Conclusion target: <code>.artifacts/conclusions/20260627-0229-amy-notes-capture-stats-widget-conclusion.html</code>
+    </div>
+
+    <section class="card">
+      <h2>Goal</h2>
+      <p>Refine Amy after the 1.0.6 release using the new screenshots: make Today feel like a real notes app instead of an overlaid text/rail hack, keep the floating top controls from clipping note text, improve keyboard clearance, simplify and beautify the food photo agent sheet, make stats show average-vs-goal instead of week-vs-goal, improve Goals/Targets and Local Data in Settings, make the Today widget height-resizable and quick-log focused, then build and publish a new local native release.</p>
+    </section>
+
+    <section class="card">
+      <h2>Current Findings</h2>
+      <ul>
+        <li><code>TodayScreen.tsx</code> still uses one multiline <code>TextInput</code> with a separate absolute calorie rail. That is why note text can clip under the top controls while calories remain visible.</li>
+        <li>The top logo/date/streak/settings controls live in normal layout, but screenshots show the scroll/edit surface moving underneath them without enough guarded inset. They should behave as a floating header over padded content.</li>
+        <li>The food capture route uses <code>ModalShell</code> title <code>Food agent</code> and then repeats <code>Food agent</code> inside <code>CaptureModal</code>.</li>
+        <li>Stats cards currently show <code>Week total / Goal</code>, which compares seven-day totals to one-day goals. The header should show daily average against the goal.</li>
+        <li>Settings shows Goals/Targets and Local Data as raw form sections. They need clearer goal type/status, explicit macro targets, and cleaner export/import affordances.</li>
+        <li>The Today widget still displays note text and macro line. The requested direction is quick logging only: tap/type/camera/mic/saved/barcode, not "what I ate".</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Orchestration Constraint</h2>
+      <p>Oracle requests real Codex threads first, but this environment does not expose the Codex app <code>create_thread</code>/<code>fork_thread</code>/<code>read_thread</code> tools. The exposed fan-out mechanism is <code>multi_agent_v1</code>. This orchestrator will therefore use worker-agent threads as the practical substitute and will record their IDs and findings in the conclusion.</p>
+    </section>
+
+    <section class="card">
+      <h2>Worker Fan-Out</h2>
+      <ul>
+        <li><strong>Worker A - Today notes, floating header, keyboard:</strong> <code>019f07c6-31ca-7e40-9e9a-73e118720dd2</code> / Mill. Owns <code>src/screens/TodayScreen.tsx</code> and may add a small local helper component in the same file only. Deliver a row-based notes/calorie layout, protected floating header inset, and safer keyboard/dock spacing.</li>
+        <li><strong>Worker B - Food agent capture sheet:</strong> <code>019f07c6-323a-7200-babd-e44e4416d030</code> / Nash. Owns <code>App.tsx</code> and <code>src/screens/CaptureModal.tsx</code>. Remove duplicate Food agent copy and consolidate camera/photos/preview into one polished capture component.</li>
+        <li><strong>Worker C - Stats, Goals/Targets, Local Data:</strong> <code>019f07c6-3333-7ab1-85a9-9348d77f19cd</code> / Ohm. Owns <code>src/screens/StatsModal.tsx</code>, <code>src/screens/SettingsModal.tsx</code>, and shared nutrition display files only if required. Replace week/goal copy with average/goal, improve goal target status, and rebuild Local Data UI.</li>
+        <li><strong>Worker D - Widget native plugin:</strong> <code>019f07c6-33e6-7440-b094-7afd686fac63</code> / Planck. Owns <code>plugins/withAmyAndroidWidgets.js</code> and generated-widget expectations. Make Today widget quick-log focused, remove food text display, improve vertical resize metadata/layout, and preserve all deep links.</li>
+        <li><strong>Worker E - Impeccable review/audit:</strong> review-only. Runs design/product audit across the changed surfaces after implementation and returns specific file/line findings.</li>
+        <li><strong>Worker F - Release verification:</strong> review/build lane after integration. Runs TypeScript, Expo sanity, prebuild, native local APK build, APK verification, emulator smoke if available, and GitHub release publish.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Design Direction</h2>
+      <ul>
+        <li>Register: product UI. The design should feel like a compact Android notes tool, not a dashboard or decorative health app.</li>
+        <li>Primary surface: logging. Top controls should hover as controls, while note rows are the content.</li>
+        <li>Use restrained dark product styling, existing tokens, lucide icons, large touch targets, and stable row heights. Avoid nested cards and oversized roundness.</li>
+        <li>Stats should compare like with like: daily average calories against daily calorie target, daily average protein/carbs/fat against daily macro targets.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Verification Strategy</h2>
+      <ul>
+        <li><code>npm test</code>, <code>npm run check:deps</code>, and <code>npx expo-doctor</code>.</li>
+        <li><code>node --check plugins/withAmyAndroidWidgets.js</code> and generated Android widget XML/provider inspections after prebuild.</li>
+        <li>Android emulator visual smoke of Today scroll/header/keyboard, Food agent, Stats, Settings Goals/Local Data, and widgets/deep links where available.</li>
+        <li>Native local Gradle release build, <code>aapt2 dump badging</code>, <code>apksigner verify</code>, SHA-256, GitHub release asset update.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

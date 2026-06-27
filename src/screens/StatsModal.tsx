@@ -5,10 +5,10 @@ import Svg, { Circle, Line, Polyline } from "react-native-svg";
 import { InteractivePressable } from "../components/InteractivePressable";
 import { totalsForDay } from "../domain/nutrition";
 import { currentStreakDays, totalLoggedDays } from "../domain/streaks";
-import { WeightLog } from "../domain/types";
+import { FoodEntry, WeightLog } from "../domain/types";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
-import { addDays, dateFromKey, weekRangeLabel } from "../utils/date";
+import { addDays, dateFromKey, toDateKey, weekRangeLabel } from "../utils/date";
 
 const TREND_WIDTH = 280;
 const TREND_HEIGHT = 132;
@@ -47,6 +47,14 @@ function formatWeight(value: number) {
 
 function formatMacro(value: number) {
   return Math.round(value).toLocaleString();
+}
+
+function formatMetricValue(value: number, unit: string) {
+  return `${formatMacro(value)}${unit}`;
+}
+
+function hasLoggedEntriesForDay(entries: FoodEntry[], day: string) {
+  return entries.some((entry) => entry.day === day);
 }
 
 function daysInSelectedMonth(selectedDay: string) {
@@ -121,6 +129,21 @@ export function StatsModal({ tab }: { tab: StatsTab }) {
     },
     { calories: 0, protein: 0, carbs: 0, fat: 0 }
   );
+  const todayKey = toDateKey(new Date());
+  const averageDays = days.filter((day) => day <= todayKey || hasLoggedEntriesForDay(data.entries, day));
+  const averageDayCount = Math.max(1, averageDays.length);
+  const averageTotals = averageDays.reduce(
+    (sum, day) => {
+      const total = totalsForDay(data.entries, day);
+      return {
+        calories: sum.calories + total.calories,
+        protein: sum.protein + total.protein,
+        carbs: sum.carbs + total.carbs,
+        fat: sum.fat + total.fat
+      };
+    },
+    { calories: 0, protein: 0, carbs: 0, fat: 0 }
+  );
   const weightTrend = trendSummary(data.weightLogs, data.goal.weightGoalLbs);
   const weightDeltaLabel =
     weightTrend.delta === 0 ? "No change" : `${weightTrend.delta > 0 ? "+" : ""}${formatWeight(weightTrend.delta)} lbs`;
@@ -131,17 +154,20 @@ export function StatsModal({ tab }: { tab: StatsTab }) {
         <>
           <Text style={styles.week}>{weekRangeLabel(selectedDay)}</Text>
           {[
-            { label: "Calories Consumed", field: "calories" as const, color: "#D82EFF", target: data.goal.dailyCalories },
-            { label: "Protein", field: "protein" as const, color: colors.blue, target: data.goal.proteinTarget },
-            { label: "Carbs", field: "carbs" as const, color: colors.pink, target: data.goal.carbsTarget },
-            { label: "Fat", field: "fat" as const, color: "#E35BFF", target: data.goal.fatTarget }
+            { label: "Calories Consumed", field: "calories" as const, color: colors.purple, target: data.goal.dailyCalories, unit: "" },
+            { label: "Protein", field: "protein" as const, color: colors.blue, target: data.goal.proteinTarget, unit: "g" },
+            { label: "Carbs", field: "carbs" as const, color: colors.pink, target: data.goal.carbsTarget, unit: "g" },
+            { label: "Fat", field: "fat" as const, color: colors.yellow, target: data.goal.fatTarget, unit: "g" }
 	          ].map((metric) => (
 		            <View key={metric.label} style={styles.chartCard}>
 	              <View style={styles.chartHeader}>
 	                <Text style={styles.chartTitle}>{metric.label}</Text>
-	                <Text style={styles.chartAvg}>
-                    Week {formatMacro(weekTotals[metric.field])} / Goal {Math.round(metric.target)}
-                  </Text>
+	                <View style={styles.chartAvg}>
+                    <Text style={styles.chartAvgLabel}>Daily avg / goal</Text>
+                    <Text style={styles.chartAvgValue}>
+                      {formatMetricValue(averageTotals[metric.field] / averageDayCount, metric.unit)} / {formatMetricValue(metric.target, metric.unit)}
+                    </Text>
+                  </View>
 	              </View>
 	              <View style={styles.chart}>
 	                {days.map((day) => {
@@ -160,7 +186,10 @@ export function StatsModal({ tab }: { tab: StatsTab }) {
 	          <View style={styles.chartCard}>
 	            <View style={styles.chartHeader}>
 	              <Text style={styles.chartTitle}>Weight</Text>
-	              <Text style={styles.chartAvg}>Goal {formatWeight(data.goal.weightGoalLbs)} lbs</Text>
+	              <View style={styles.chartAvg}>
+                  <Text style={styles.chartAvgLabel}>Weight goal</Text>
+                  <Text style={styles.chartAvgValue}>{formatWeight(data.goal.weightGoalLbs)} lbs</Text>
+                </View>
 	            </View>
             {weightTrend.current ? (
               <>
@@ -315,8 +344,19 @@ const styles = StyleSheet.create({
     fontWeight: "900"
   },
   chartAvg: {
-    maxWidth: 148,
+    minWidth: 128,
+    maxWidth: 162,
+    alignItems: "flex-end",
+    gap: 3
+  },
+  chartAvgLabel: {
     color: colors.muted,
+    fontSize: 12,
+    fontWeight: "900",
+    textAlign: "right"
+  },
+  chartAvgValue: {
+    color: colors.ink,
     fontSize: 15,
     fontWeight: "900",
     textAlign: "right"

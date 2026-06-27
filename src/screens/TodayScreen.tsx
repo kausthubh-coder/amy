@@ -10,7 +10,6 @@ import {
   LayoutAnimation,
   PanResponder,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -65,8 +64,12 @@ const phaseText: Record<LinePhase, string> = {
 
 const animatedNativeDriver = Platform.OS !== "web";
 const NOTE_LINE_HEIGHT = 32;
-const LINE_RAIL_WIDTH = 116;
-const NOTE_INPUT_RIGHT_PADDING = LINE_RAIL_WIDTH + 8;
+const CALORIE_HIT_TARGET = 44;
+const CALORIE_HIT_OFFSET = (CALORIE_HIT_TARGET - NOTE_LINE_HEIGHT) / 2;
+const LINE_RAIL_WIDTH = 104;
+const NOTE_ROW_GAP = 10;
+const FLOATING_HEADER_HEIGHT = 52;
+const FLOATING_HEADER_GUARD = 42;
 
 if (Platform.OS === "android") {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
@@ -520,11 +523,17 @@ export function TodayScreen({
   const streakCount = useMemo(() => currentStreakDays(data?.entries ?? [], selectedDay), [data?.entries, selectedDay]);
   const lineRows = useMemo(() => buildLineRows(workingText, entries, lineStatuses), [entries, lineStatuses, workingText]);
   const editingEntry = useMemo(() => entries.find((entry) => entry.id === editingEntryId), [editingEntryId, entries]);
+  const floatingHeaderTop = Math.max(insets.top + 44, 76);
+  const contentTopInset = floatingHeaderTop + FLOATING_HEADER_HEIGHT + FLOATING_HEADER_GUARD;
   const keyboardDockOffset =
-    inputFocused && keyboardOpen && keyboardHeight > 0 ? Math.max(keyboardHeight - insets.bottom + 10, 10) : 0;
+    inputFocused && keyboardOpen && keyboardHeight > 0
+      ? Platform.OS === "ios"
+        ? Math.max(insets.bottom + 18, 24)
+        : keyboardHeight + 16
+      : 0;
   const dockBottom = keyboardDockOffset || Math.max(insets.bottom + 10, 18);
-  const dockReserve = dockBottom + 78;
-  const measuredTextWidth = Math.max(80, windowWidth - 36 - NOTE_INPUT_RIGHT_PADDING);
+  const dockReserve = dockBottom + 92;
+  const measuredTextWidth = Math.max(80, windowWidth - 36 - LINE_RAIL_WIDTH - NOTE_ROW_GAP);
 
   useEffect(() => {
     workingTextRef.current = workingText;
@@ -923,96 +932,117 @@ export function TodayScreen({
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === "ios" ? "padding" : undefined}
-	      style={[styles.screen, { paddingTop: Math.max(insets.top + 10, 24) }]}
+      style={styles.screen}
       onTouchStart={rememberTouchStart}
       onTouchEnd={finishTouchSwipe}
       {...panResponder.panHandlers}
     >
-	      <View style={styles.top}>
-	        <Image source={require("../../assets/icon-cat-alt.png")} style={styles.logo} />
-	        <InteractivePressable onPress={() => shiftDay(0)} style={styles.todayPill}>
-	          <Text style={styles.todayText}>{labelForDay(selectedDay)}</Text>
-	        </InteractivePressable>
-		        <View style={styles.topActions}>
-		          <InteractivePressable onPress={() => openModal("stats")} style={styles.streakPill}>
-		            <Flame size={20} color={colors.orange} fill={colors.orange} strokeWidth={2.2} />
-		            <Text style={styles.streakText}>{streakCount}</Text>
-		          </InteractivePressable>
-	          <InteractivePressable onPress={() => openModal("settings")} style={styles.settingsPill}>
-	            <Settings size={22} color={colors.ink} strokeWidth={2.5} />
-	          </InteractivePressable>
-	        </View>
-	      </View>
+      <View style={[styles.top, { top: floatingHeaderTop }]}>
+        <Image source={require("../../assets/icon-cat-alt.png")} style={styles.logo} />
+        <InteractivePressable
+          accessibilityRole="button"
+          accessibilityLabel="Jump to today"
+          accessibilityHint="Returns the log to today's date."
+          onPress={() => shiftDay(0)}
+          style={styles.todayPill}
+        >
+          <Text style={styles.todayText}>{labelForDay(selectedDay)}</Text>
+        </InteractivePressable>
+        <View style={styles.topActions}>
+          <InteractivePressable
+            accessibilityRole="button"
+            accessibilityLabel={`${streakCount} day streak`}
+            accessibilityHint="Opens stats and streak details."
+            onPress={() => openModal("stats")}
+            style={styles.streakPill}
+          >
+            <Flame size={20} color={colors.orange} fill={colors.orange} strokeWidth={2.2} />
+            <Text style={styles.streakText}>{streakCount}</Text>
+          </InteractivePressable>
+          <InteractivePressable
+            accessibilityRole="button"
+            accessibilityLabel="Open settings"
+            accessibilityHint="Edit goals, AI settings, import, export, and app preferences."
+            onPress={() => openModal("settings")}
+            style={styles.settingsPill}
+          >
+            <Settings size={22} color={colors.ink} strokeWidth={2.5} />
+          </InteractivePressable>
+        </View>
+      </View>
 
-      <View style={[styles.body, { paddingBottom: dockReserve }]}>
+      <View style={[styles.body, { paddingTop: contentTopInset, paddingBottom: dockReserve }]}>
         <View style={styles.logArea}>
-          <TextInput
-            ref={inputRef}
-            value={workingText}
-            onChangeText={handleTextChange}
-            onFocus={() => {
-              if (dockBlurTimerRef.current) clearTimeout(dockBlurTimerRef.current);
-              setInputFocused(true);
-            }}
-            onBlur={() => {
-              if (skipNextBlurSaveRef.current) skipNextBlurSaveRef.current = false;
-              else updateDayNote(selectedDay, workingTextRef.current.trimEnd());
-              if (dockBlurTimerRef.current) clearTimeout(dockBlurTimerRef.current);
-              dockBlurTimerRef.current = setTimeout(() => setInputFocused(false), 180);
-            }}
-	            multiline
-	            onScroll={(event) => setNoteScrollY(event.nativeEvent.contentOffset.y)}
-	            placeholder="Start logging your meals..."
-	            placeholderTextColor={colors.dim}
-	            style={styles.noteInput}
-	          />
+          <View style={styles.noteColumn}>
+            <TextInput
+              ref={inputRef}
+              value={workingText}
+              onChangeText={handleTextChange}
+              onFocus={() => {
+                if (dockBlurTimerRef.current) clearTimeout(dockBlurTimerRef.current);
+                setInputFocused(true);
+              }}
+              onBlur={() => {
+                if (skipNextBlurSaveRef.current) skipNextBlurSaveRef.current = false;
+                else updateDayNote(selectedDay, workingTextRef.current.trimEnd());
+                if (dockBlurTimerRef.current) clearTimeout(dockBlurTimerRef.current);
+                dockBlurTimerRef.current = setTimeout(() => setInputFocused(false), 180);
+              }}
+              multiline
+              scrollEnabled
+              onScroll={(event) => setNoteScrollY(event.nativeEvent.contentOffset.y)}
+              placeholder="Start logging your meals..."
+              placeholderTextColor={colors.dim}
+              style={styles.noteInput}
+            />
 
-          <View pointerEvents="none" style={styles.measureLayer}>
-            {lineRows.map((row) => (
-              <Text
-                key={`measure-${row.key}`}
-                onTextLayout={(event) => rememberLineHeight(row.key, event)}
-                style={[styles.measureText, { width: measuredTextWidth }]}
-              >
-                {row.text || " "}
-              </Text>
-            ))}
+            <View pointerEvents="none" style={styles.measureLayer}>
+              {lineRows.map((row) => (
+                <Text
+                  key={`measure-${row.key}`}
+                  onTextLayout={(event) => rememberLineHeight(row.key, event)}
+                  style={[styles.measureText, { width: measuredTextWidth }]}
+                >
+                  {row.text || " "}
+                </Text>
+              ))}
+            </View>
           </View>
 
-	          <View style={[styles.lineRail, { transform: [{ translateY: -noteScrollY }] }]}>
-            {lineRows.map((row) => {
-              const activePhase = row.status?.phase && row.status.phase !== "done" ? row.status.phase : undefined;
-              const label = activePhase ? phaseText[activePhase] : row.entry ? `${row.entry.macros.calories.toLocaleString()} cal` : "";
-              const canEdit = Boolean(row.entry);
-              const rowHeight = lineHeights[row.key] ?? NOTE_LINE_HEIGHT;
-              return (
-                <View key={row.key} style={[styles.lineRailSlot, { height: rowHeight }]}>
-                  {canEdit ? (
-                    <InteractivePressable
-                      feedbackKind="edit"
-                      onPress={() => setEditingEntryId(row.entry?.id ?? null)}
-                      style={styles.lineCalorieHit}
-                    >
+          <View style={styles.lineRailViewport}>
+            <View style={[styles.lineRail, { transform: [{ translateY: -noteScrollY }] }]}>
+              {lineRows.map((row) => {
+                const activePhase = row.status?.phase && row.status.phase !== "done" ? row.status.phase : undefined;
+                const label = activePhase ? phaseText[activePhase] : row.entry ? `${row.entry.macros.calories.toLocaleString()} cal` : "";
+                const canEdit = Boolean(row.entry);
+                const rowHeight = lineHeights[row.key] ?? NOTE_LINE_HEIGHT;
+                return (
+                  <View key={row.key} style={[styles.lineRailSlot, { height: rowHeight }]}>
+                    {canEdit ? (
+                      <InteractivePressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Edit ${row.entry?.title ?? "food"}, ${label}`}
+                        accessibilityHint="Opens the nutrition editor for this log line."
+                        feedbackKind="edit"
+                        onPress={() => setEditingEntryId(row.entry?.id ?? null)}
+                        style={styles.lineCalorieHit}
+                      >
+                        <Text style={styles.sideCalories}>{label}</Text>
+                      </InteractivePressable>
+                    ) : activePhase ? (
+                      <PhaseIndicator phase={activePhase} />
+                    ) : (
                       <Text style={styles.sideCalories}>{label}</Text>
-                    </InteractivePressable>
-	                  ) : (
-	                    activePhase ? <PhaseIndicator phase={activePhase} /> : <Text style={styles.sideCalories}>{label}</Text>
-	                  )}
-                </View>
-              );
-            })}
+                    )}
+                  </View>
+                );
+              })}
+            </View>
           </View>
         </View>
 
-        <ScrollView
-          style={styles.results}
-          contentContainerStyle={styles.resultsContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-	        >
-	          {notice ? <Text style={styles.notice}>{notice}</Text> : null}
-	        </ScrollView>
-	      </View>
+        <View style={styles.noticeArea}>{notice ? <Text style={styles.notice}>{notice}</Text> : null}</View>
+      </View>
 
       {calorieOverlayVisible ? (
         <View style={[styles.calorieOverlay, { bottom: dockBottom + 66 }]}>
@@ -1028,38 +1058,65 @@ export function TodayScreen({
           </View>
           <ProgressBar value={calorieProgress} />
           <View style={styles.overlayRings}>
-	            <MacroRing label="Carbs" value={totals.carbs} target={data.goal.carbsTarget} color={colors.pink} />
-	            <MacroRing label="Protein" value={totals.protein} target={data.goal.proteinTarget} color={colors.blue} />
-	            <MacroRing label="Fat" value={totals.fat} target={data.goal.fatTarget} color={colors.yellow} />
+            <MacroRing label="Carbs" value={totals.carbs} target={data.goal.carbsTarget} color={colors.pink} />
+            <MacroRing label="Protein" value={totals.protein} target={data.goal.proteinTarget} color={colors.blue} />
+            <MacroRing label="Fat" value={totals.fat} target={data.goal.fatTarget} color={colors.yellow} />
           </View>
         </View>
       ) : null}
 
-	        <View style={[styles.dock, { bottom: dockBottom }]}>
-	          <InteractivePressable
-              accessibilityLabel={calorieOverlayVisible ? "Hide calorie details" : "Show calorie details"}
-              onPress={() => {
-                Keyboard.dismiss();
-                setCalorieOverlayVisible((visible) => !visible);
-              }}
-              style={[styles.caloriePill, calorieOverlayVisible && styles.caloriePillActive]}
-            >
-	            <Text style={styles.calorieEmoji}>🔥</Text>
-	            <Text style={styles.caloriePillText}>{totals.calories.toLocaleString()}</Text>
-	          </InteractivePressable>
-          <InteractivePressable onPress={toggleDictation} style={[styles.roundButton, listening && styles.roundButtonOn]}>
-            <Mic size={24} color={listening ? colors.ink : colors.blue} strokeWidth={2.6} />
-          </InteractivePressable>
-          <InteractivePressable onPress={() => openModal("capture", "photo")} style={styles.roundButton}>
-            <Camera size={24} color="#F141FF" strokeWidth={2.6} />
-          </InteractivePressable>
-          <InteractivePressable onPress={() => openModal("saved")} style={styles.roundButton}>
-            <Plus size={26} color={colors.orange} strokeWidth={2.8} />
-          </InteractivePressable>
-	          <InteractivePressable onPress={() => openModal("capture", "barcode")} style={styles.roundButton}>
-	            <Barcode size={24} color={colors.ink} strokeWidth={2.4} />
-	          </InteractivePressable>
-        </View>
+      <View style={[styles.dock, { bottom: dockBottom }]}>
+        <InteractivePressable
+          accessibilityRole="button"
+          accessibilityLabel={calorieOverlayVisible ? "Hide calorie details" : "Show calorie details"}
+          accessibilityHint="Toggles today's calorie and macro summary."
+          onPress={() => {
+            Keyboard.dismiss();
+            setCalorieOverlayVisible((visible) => !visible);
+          }}
+          style={[styles.caloriePill, calorieOverlayVisible && styles.caloriePillActive]}
+        >
+          <Text style={styles.calorieEmoji}>🔥</Text>
+          <Text style={styles.caloriePillText}>{totals.calories.toLocaleString()}</Text>
+        </InteractivePressable>
+        <InteractivePressable
+          accessibilityRole="button"
+          accessibilityLabel={listening ? "Stop dictation" : "Start dictation"}
+          accessibilityHint="Dictates a meal into today's log."
+          accessibilityState={{ selected: listening }}
+          onPress={toggleDictation}
+          style={[styles.roundButton, listening && styles.roundButtonOn]}
+        >
+          <Mic size={24} color={listening ? colors.ink : colors.blue} strokeWidth={2.6} />
+        </InteractivePressable>
+        <InteractivePressable
+          accessibilityRole="button"
+          accessibilityLabel="Open meal photo capture"
+          accessibilityHint="Take or choose meal photos to estimate nutrition."
+          onPress={() => openModal("capture", "photo")}
+          style={styles.roundButton}
+        >
+          <Camera size={24} color={colors.pink} strokeWidth={2.6} />
+        </InteractivePressable>
+        <InteractivePressable
+          accessibilityRole="button"
+          accessibilityLabel="Open saved meals"
+          accessibilityHint="Add a saved meal to today's log."
+          onPress={() => openModal("saved")}
+          style={styles.roundButton}
+        >
+          <Plus size={26} color={colors.orange} strokeWidth={2.8} />
+        </InteractivePressable>
+        <InteractivePressable
+          accessibilityRole="button"
+          accessibilityLabel="Scan barcode"
+          accessibilityHint="Scan a packaged food with Open Food Facts."
+          onPress={() => openModal("capture", "barcode")}
+          style={styles.roundButton}
+        >
+          <Barcode size={24} color={colors.ink} strokeWidth={2.4} />
+        </InteractivePressable>
+      </View>
 
       <FoodEditModal entry={editingEntry} onClose={() => setEditingEntryId(null)} onSave={saveEntry} onDelete={removeEntry} />
     </KeyboardAvoidingView>
@@ -1072,24 +1129,30 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
     position: "relative",
     paddingHorizontal: 18,
-    paddingTop: 18,
     paddingBottom: 0
   },
   top: {
-    minHeight: 52,
+    position: "absolute",
+    left: 18,
+    right: 18,
+    height: FLOATING_HEADER_HEIGHT,
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
+    zIndex: 20,
+    elevation: 20
   },
   logo: {
     width: 46,
     height: 46,
     borderRadius: 12,
     position: "absolute",
-    left: 0
+    left: 0,
+    top: 3
   },
   topActions: {
     position: "absolute",
     right: 0,
+    top: 2,
     flexDirection: "row",
     alignItems: "center",
     gap: 8
@@ -1142,19 +1205,30 @@ const styles = StyleSheet.create({
   },
   body: {
     flex: 1,
-    paddingTop: 50
+    gap: 10
   },
   logArea: {
+    flex: 1,
     minHeight: 128,
-    position: "relative"
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: NOTE_ROW_GAP,
+    overflow: "hidden"
+  },
+  noteColumn: {
+    flex: 1,
+    minWidth: 0,
+    position: "relative",
+    overflow: "hidden"
   },
   noteInput: {
+    flex: 1,
     color: colors.ink,
     fontSize: 24,
     lineHeight: NOTE_LINE_HEIGHT,
     fontWeight: "500",
     padding: 0,
-    paddingRight: NOTE_INPUT_RIGHT_PADDING,
+    paddingBottom: 18,
     textAlignVertical: "top"
   },
   measureLayer: {
@@ -1170,20 +1244,26 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     padding: 0
   },
+  lineRailViewport: {
+    width: LINE_RAIL_WIDTH,
+    alignSelf: "stretch",
+    overflow: "hidden"
+  },
   lineRail: {
-    position: "absolute",
-    top: 0,
-    right: 0,
     width: LINE_RAIL_WIDTH,
     alignItems: "flex-end"
   },
   lineRailSlot: {
+    width: "100%",
     alignItems: "flex-end",
     justifyContent: "flex-start"
   },
   lineCalorieHit: {
+    position: "absolute",
+    top: -CALORIE_HIT_OFFSET,
+    right: 0,
     minWidth: 86,
-    minHeight: NOTE_LINE_HEIGHT,
+    height: CALORIE_HIT_TARGET,
     alignItems: "flex-end",
     justifyContent: "center"
   },
@@ -1213,13 +1293,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: colors.pink
   },
-  results: {
-    flex: 1
-  },
-  resultsContent: {
-    flexGrow: 1,
-    justifyContent: "flex-start",
-    gap: 12
+  noticeArea: {
+    minHeight: 20,
+    justifyContent: "flex-start"
   },
   notice: {
     color: colors.muted,

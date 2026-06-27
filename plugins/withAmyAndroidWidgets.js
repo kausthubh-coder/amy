@@ -60,6 +60,14 @@ const widgetChip = `
 </shape>
 `;
 
+const widgetPrimaryChip = `
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+  <solid android:color="#FF9824" />
+  <corners android:radius="18dp" />
+</shape>
+`;
+
 const widgetIconMic = `
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -179,49 +187,73 @@ const todayLayout = `
   android:layout_width="match_parent"
   android:layout_height="match_parent"
   android:background="@drawable/amy_widget_background"
+  android:clipToPadding="false"
   android:orientation="vertical"
-  android:padding="12dp">
+  android:padding="10dp">
   <TextView
-    android:id="@+id/amy_widget_type"
-    android:layout_width="match_parent"
-    android:layout_height="0dp"
-    android:layout_weight="1"
-    android:gravity="top"
-    android:maxLines="2"
-    android:text="Start logging your meals..."
-    android:textColor="#7B7B82"
-    android:textSize="18sp"
-    android:textStyle="bold" />
-  <TextView
-    android:id="@+id/amy_widget_today_macros"
+    android:id="@+id/amy_widget_prompt"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginBottom="8dp"
-    android:text="C0  P0  F0"
-    android:textColor="#FFFFFF"
+    android:layout_marginBottom="6dp"
+    android:gravity="center_vertical"
+    android:singleLine="true"
+    android:text="Quick log"
+    android:textColor="#A1A1AA"
     android:textSize="12sp"
     android:textStyle="bold" />
   <LinearLayout
+    android:id="@+id/amy_widget_primary_row"
     android:layout_width="match_parent"
-    android:layout_height="44dp"
+    android:layout_height="0dp"
+    android:layout_weight="1"
     android:gravity="center_vertical"
+    android:minHeight="42dp"
     android:orientation="horizontal">
     <TextView
-      android:id="@+id/amy_widget_calories"
+      android:id="@+id/amy_widget_type"
       android:layout_width="0dp"
-      android:layout_height="40dp"
-      android:layout_weight="1.8"
-      android:background="@drawable/amy_widget_chip"
+      android:layout_height="match_parent"
+      android:layout_weight="2.25"
+      android:background="@drawable/amy_widget_primary_chip"
+      android:ellipsize="end"
       android:gravity="center"
-      android:text="🔥 0"
-      android:textColor="#FFFFFF"
-      android:textSize="14sp"
+      android:maxLines="1"
+      android:minHeight="42dp"
+      android:paddingLeft="10dp"
+      android:paddingRight="10dp"
+      android:text="+ Type meal"
+      android:textColor="#171717"
+      android:textSize="15sp"
       android:textStyle="bold" />
+    <TextView
+      android:id="@+id/amy_widget_today_link"
+      android:layout_width="0dp"
+      android:layout_height="match_parent"
+      android:layout_marginStart="8dp"
+      android:layout_weight="1"
+      android:background="@drawable/amy_widget_chip"
+      android:ellipsize="end"
+      android:gravity="center"
+      android:maxLines="1"
+      android:minHeight="42dp"
+      android:paddingLeft="8dp"
+      android:paddingRight="8dp"
+      android:text="Today"
+      android:textColor="#F6F6F6"
+      android:textSize="13sp"
+      android:textStyle="bold" />
+  </LinearLayout>
+  <LinearLayout
+    android:id="@+id/amy_widget_action_row"
+    android:layout_width="match_parent"
+    android:layout_height="42dp"
+    android:layout_marginTop="8dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
     <ImageView
       android:id="@+id/amy_widget_mic"
       android:layout_width="0dp"
-      android:layout_height="40dp"
-      android:layout_marginStart="6dp"
+      android:layout_height="42dp"
       android:layout_weight="1"
       android:background="@drawable/amy_widget_chip"
       android:contentDescription="Mic"
@@ -231,18 +263,18 @@ const todayLayout = `
     <ImageView
       android:id="@+id/amy_widget_camera"
       android:layout_width="0dp"
-      android:layout_height="40dp"
+      android:layout_height="42dp"
       android:layout_marginStart="6dp"
       android:layout_weight="1"
       android:background="@drawable/amy_widget_chip"
-      android:contentDescription="Camera"
+      android:contentDescription="Photo"
       android:padding="10dp"
       android:scaleType="center"
       android:src="@drawable/amy_widget_icon_camera" />
     <ImageView
       android:id="@+id/amy_widget_saved"
       android:layout_width="0dp"
-      android:layout_height="40dp"
+      android:layout_height="42dp"
       android:layout_marginStart="6dp"
       android:layout_weight="1"
       android:background="@drawable/amy_widget_chip"
@@ -253,7 +285,7 @@ const todayLayout = `
     <ImageView
       android:id="@+id/amy_widget_barcode"
       android:layout_width="0dp"
-      android:layout_height="40dp"
+      android:layout_height="42dp"
       android:layout_marginStart="6dp"
       android:layout_weight="1"
       android:background="@drawable/amy_widget_chip"
@@ -287,14 +319,14 @@ const todayInfo = `
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
   android:description="@string/app_name"
   android:initialLayout="@layout/amy_widget_today"
-  android:minWidth="230dp"
-  android:minHeight="124dp"
-  android:minResizeWidth="190dp"
-  android:minResizeHeight="104dp"
+  android:minWidth="238dp"
+  android:minHeight="146dp"
+  android:minResizeWidth="184dp"
+  android:minResizeHeight="112dp"
   android:previewLayout="@layout/amy_widget_today"
   android:resizeMode="horizontal|vertical"
   android:targetCellWidth="4"
-  android:targetCellHeight="2"
+  android:targetCellHeight="3"
   android:updatePeriodMillis="0"
   android:widgetCategory="home_screen" />
 `;
@@ -313,7 +345,6 @@ public class AmyWidgetState {
   private static final String KEY_JSON = "state_json";
 
   public String dayLabel = "Today";
-  public String note = "";
   public int caloriesConsumed = 0;
   public int caloriesGoal = 2632;
   public int caloriesRemaining = 2632;
@@ -329,7 +360,6 @@ public class AmyWidgetState {
     try {
       JSONObject object = new JSONObject(json);
       state.dayLabel = object.optString("dayLabel", state.dayLabel);
-      state.note = object.optString("note", state.note);
       state.caloriesConsumed = object.optInt("caloriesConsumed", state.caloriesConsumed);
       state.caloriesGoal = object.optInt("caloriesGoal", state.caloriesGoal);
       state.caloriesRemaining = object.optInt("caloriesRemaining", Math.max(0, state.caloriesGoal - state.caloriesConsumed));
@@ -357,11 +387,6 @@ public class AmyWidgetState {
 	  public String macroLine() {
 	    return "C" + carbs + "  P" + protein + "  F" + fat;
 	  }
-
-  public String noteText() {
-    String clean = note == null ? "" : note.trim();
-    return clean.length() > 0 ? clean : "Start logging your meals...";
-  }
 
   private String format(int value) {
     return NumberFormat.getIntegerInstance(Locale.US).format(value);
@@ -514,32 +539,46 @@ import android.appwidget.AppWidgetProvider;
 	import android.content.Intent;
 	import android.net.Uri;
 	import android.os.Bundle;
+	import android.view.View;
 	import android.widget.RemoteViews;
 
 public class AmyTodayWidgetProvider extends AppWidgetProvider {
+  private static final int EXPANDED_HEIGHT_DP = 132;
+  private static final int NARROW_WIDTH_DP = 216;
+
   @Override
   public void onUpdate(Context context, AppWidgetManager appWidgetManager, int[] appWidgetIds) {
-    AmyWidgetState state = AmyWidgetState.read(context);
     for (int appWidgetId : appWidgetIds) {
-	      RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.amy_widget_today);
-	      views.setTextViewText(R.id.amy_widget_type, state.noteText());
-	      views.setTextViewText(R.id.amy_widget_calories, "🔥 " + state.consumedLabel());
-	      views.setTextViewText(R.id.amy_widget_today_macros, state.macroLine());
-      views.setOnClickPendingIntent(R.id.amy_widget_today_root, openIntent(context, "amy://today", 201));
-	      views.setOnClickPendingIntent(R.id.amy_widget_type, openIntent(context, "amy://type", 202));
-	      views.setOnClickPendingIntent(R.id.amy_widget_calories, openIntent(context, "amy://today", 203));
-      views.setOnClickPendingIntent(R.id.amy_widget_mic, openIntent(context, "amy://capture/mic", 204));
-      views.setOnClickPendingIntent(R.id.amy_widget_camera, openIntent(context, "amy://capture/photo", 205));
-      views.setOnClickPendingIntent(R.id.amy_widget_saved, openIntent(context, "amy://saved", 206));
-      views.setOnClickPendingIntent(R.id.amy_widget_barcode, openIntent(context, "amy://scan/barcode", 207));
-      appWidgetManager.updateAppWidget(appWidgetId, views);
+      updateOne(context, appWidgetManager, appWidgetId, appWidgetManager.getAppWidgetOptions(appWidgetId));
     }
 	  }
 
 	  @Override
 	  public void onAppWidgetOptionsChanged(Context context, AppWidgetManager appWidgetManager, int appWidgetId, Bundle newOptions) {
-	    onUpdate(context, appWidgetManager, new int[] { appWidgetId });
+    updateOne(context, appWidgetManager, appWidgetId, newOptions);
 	  }
+
+  private void updateOne(Context context, AppWidgetManager appWidgetManager, int appWidgetId, Bundle options) {
+    int minHeight = options == null ? 0 : options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0);
+    int minWidth = options == null ? 0 : options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0);
+    boolean expanded = minHeight >= EXPANDED_HEIGHT_DP;
+    boolean narrow = minWidth > 0 && minWidth < NARROW_WIDTH_DP;
+
+    RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.amy_widget_today);
+    views.setViewVisibility(R.id.amy_widget_prompt, expanded ? View.VISIBLE : View.GONE);
+    views.setTextViewText(R.id.amy_widget_prompt, narrow ? "Log" : "Quick log");
+    views.setTextViewText(R.id.amy_widget_type, narrow ? "+ Type" : "+ Type meal");
+    views.setTextViewText(R.id.amy_widget_today_link, narrow ? "Day" : "Today");
+      views.setOnClickPendingIntent(R.id.amy_widget_today_root, openIntent(context, "amy://today", 201));
+    views.setOnClickPendingIntent(R.id.amy_widget_prompt, openIntent(context, "amy://today", 202));
+    views.setOnClickPendingIntent(R.id.amy_widget_type, openIntent(context, "amy://type", 203));
+    views.setOnClickPendingIntent(R.id.amy_widget_today_link, openIntent(context, "amy://today", 204));
+      views.setOnClickPendingIntent(R.id.amy_widget_mic, openIntent(context, "amy://capture/mic", 205));
+      views.setOnClickPendingIntent(R.id.amy_widget_camera, openIntent(context, "amy://capture/photo", 206));
+      views.setOnClickPendingIntent(R.id.amy_widget_saved, openIntent(context, "amy://saved", 207));
+      views.setOnClickPendingIntent(R.id.amy_widget_barcode, openIntent(context, "amy://scan/barcode", 208));
+      appWidgetManager.updateAppWidget(appWidgetId, views);
+  }
 
 	  private PendingIntent openIntent(Context context, String url, int requestCode) {
     Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
@@ -580,6 +619,7 @@ function withAmyAndroidWidgets(config) {
 
 	      writeFile(path.join(androidRoot, "app/src/main/res/drawable/amy_widget_background.xml"), widgetBackground);
 	      writeFile(path.join(androidRoot, "app/src/main/res/drawable/amy_widget_chip.xml"), widgetChip);
+	      writeFile(path.join(androidRoot, "app/src/main/res/drawable/amy_widget_primary_chip.xml"), widgetPrimaryChip);
 	      writeFile(path.join(androidRoot, "app/src/main/res/drawable/amy_widget_icon_mic.xml"), widgetIconMic);
 	      writeFile(path.join(androidRoot, "app/src/main/res/drawable/amy_widget_icon_camera.xml"), widgetIconCamera);
 	      writeFile(path.join(androidRoot, "app/src/main/res/drawable/amy_widget_icon_plus.xml"), widgetIconPlus);

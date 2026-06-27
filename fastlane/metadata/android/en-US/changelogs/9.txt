@@ -1,0 +1,8 @@
+Amy 1.0.7 refines the daily notes surface, capture sheet, stats, settings, and widgets.
+
+- Today now keeps notes and calories aligned in one scrolling log surface under floating header controls.
+- Food and label photo capture now uses one cleaner photo panel with clearer preview and accessibility states.
+- Stats now shows daily averages against goals instead of week totals compared to daily goals.
+- Goals & Targets now shows goal type, macro targets, saved/pending values, and safer input validation.
+- Local Data now has clearer private backup export/import controls.
+- The mini Today widget is now quick-log focused and supports vertical resize metadata.

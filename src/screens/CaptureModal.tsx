@@ -191,7 +191,7 @@ export function CaptureModal({
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        setNotice("Gallery permission is needed to choose food photos.");
+        setNotice(`Gallery permission is needed to choose ${mode === "label" ? "nutrition label photos" : "food photos"}.`);
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -214,7 +214,7 @@ export function CaptureModal({
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        setNotice("Camera permission is needed to take a food photo.");
+        setNotice(`Camera permission is needed to take ${mode === "label" ? "a nutrition label photo" : "a food photo"}.`);
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
@@ -238,7 +238,7 @@ export function CaptureModal({
   const submitImageAgent = async () => {
     if (busy) return;
     if (!agentImages.length) {
-      setNotice("Add at least one food photo first.");
+      setNotice(`Add at least one ${mode === "label" ? "nutrition label photo" : "food photo"} first.`);
       return;
     }
     try {
@@ -313,71 +313,124 @@ export function CaptureModal({
   }
 
   if (mode === "photo" || mode === "label") {
-    const agentTitle = mode === "label" ? "Label agent" : "Food agent";
+    const isLabelAgent = mode === "label";
+    const photoPanelTitle = isLabelAgent ? "Label photos" : "Meal photos";
+    const photoCountLabel = agentImages.length ? `${agentImages.length}/6 ready` : "No photos yet";
+    const emptyPhotoTitle = isLabelAgent ? "Add label photos" : "Add meal photos";
+    const emptyPhotoMeta = isLabelAgent ? "Use the package label or nutrition panel." : "Use the camera or choose from Photos.";
+    const takePhotoLabel = isLabelAgent ? "Take a nutrition label photo" : "Take a meal photo";
+    const choosePhotosLabel = isLabelAgent ? "Choose nutrition label photos" : "Choose meal photos";
+    const addPhotoLabel = isLabelAgent ? "Add another nutrition label photo" : "Add another meal photo";
+    const submitPhotoLabel = isLabelAgent ? "Analyze nutrition label photos" : "Analyze meal photos";
     const submitDisabled = busy || agentImages.length === 0;
 
     return (
       <View style={styles.stack}>
-        <View style={styles.agentHeader}>
-          <View style={styles.agentIcon}>
-            <Sparkles size={24} color={colors.ink} strokeWidth={2.5} />
+        <View style={styles.photoPanel}>
+          <View style={styles.photoPanelHeader}>
+            <View style={styles.photoPanelIcon}>
+              <ImageIcon size={22} color={colors.pink} strokeWidth={2.5} />
+            </View>
+            <View style={styles.photoPanelCopy}>
+              <Text style={styles.photoPanelTitle}>{photoPanelTitle}</Text>
+              <Text style={styles.photoPanelMeta}>{photoCountLabel}</Text>
+            </View>
           </View>
-          <View style={styles.agentHeaderText}>
-            <Text style={styles.agentTitle}>{agentTitle}</Text>
-            <Text style={styles.agentMeta}>{agentImages.length ? `${agentImages.length} photo${agentImages.length === 1 ? "" : "s"}` : "No photos"}</Text>
+
+          <View style={styles.photoActionRow}>
+            <InteractivePressable
+              accessibilityRole="button"
+              accessibilityLabel={takePhotoLabel}
+              accessibilityHint="Opens the camera."
+              accessibilityState={{ disabled: busy }}
+              onPress={takeAgentPhoto}
+              disabled={busy}
+              style={styles.photoSourceButton}
+            >
+              <Camera size={21} color={colors.ink} strokeWidth={2.5} />
+              <Text style={styles.photoSourceText}>Camera</Text>
+            </InteractivePressable>
+            <InteractivePressable
+              accessibilityRole="button"
+              accessibilityLabel={choosePhotosLabel}
+              accessibilityHint="Opens your photo library."
+              accessibilityState={{ disabled: busy }}
+              onPress={pickAgentImages}
+              disabled={busy}
+              style={styles.photoSourceButton}
+            >
+              <ImageIcon size={21} color={colors.ink} strokeWidth={2.5} />
+              <Text style={styles.photoSourceText}>Photos</Text>
+            </InteractivePressable>
           </View>
-        </View>
 
-        <View style={styles.agentActions}>
-          <InteractivePressable onPress={takeAgentPhoto} disabled={busy} style={styles.agentActionButton}>
-            <Camera size={22} color={colors.ink} strokeWidth={2.5} />
-            <Text style={styles.agentActionText}>Camera</Text>
-          </InteractivePressable>
-          <InteractivePressable onPress={pickAgentImages} disabled={busy} style={styles.agentActionButton}>
-            <ImageIcon size={22} color={colors.ink} strokeWidth={2.5} />
-            <Text style={styles.agentActionText}>Photos</Text>
-          </InteractivePressable>
-        </View>
-
-        {agentImages.length ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.thumbnailRow}>
-            {agentImages.map((image, index) => (
-              <View key={image.id} style={styles.thumbnailCard}>
-                <Image source={{ uri: image.uri }} style={styles.thumbnailImage} />
-                <Text style={styles.thumbnailIndex}>{index + 1}</Text>
+          {agentImages.length ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.previewRow}>
+              {agentImages.map((image, index) => (
+                <View key={image.id} style={[styles.previewCard, busy && styles.previewCardBusy]}>
+                  <Image source={{ uri: image.uri }} style={styles.previewImage} />
+                  <Text style={styles.previewIndex}>{index + 1}</Text>
+                  <InteractivePressable
+                    accessibilityRole="button"
+                    accessibilityLabel={isLabelAgent ? `Remove nutrition label photo ${index + 1}` : `Remove meal photo ${index + 1}`}
+                    accessibilityHint="Removes this image from the analysis."
+                    accessibilityState={{ disabled: busy }}
+                    onPress={() => removeAgentImage(image.id)}
+                    disabled={busy}
+                    style={styles.removePhotoButton}
+                  >
+                    <X size={19} color={colors.ink} strokeWidth={2.7} />
+                  </InteractivePressable>
+                </View>
+              ))}
+              {agentImages.length < 6 ? (
                 <InteractivePressable
-                  accessibilityLabel="Remove photo"
-                  onPress={() => removeAgentImage(image.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={addPhotoLabel}
+                  accessibilityHint="Opens your photo library."
+                  accessibilityState={{ disabled: busy }}
+                  onPress={pickAgentImages}
                   disabled={busy}
-                  style={styles.removeThumbnail}
+                  style={styles.addPhotoCard}
                 >
-                  <X size={18} color={colors.ink} strokeWidth={2.6} />
+                  <Plus size={24} color={colors.ink} strokeWidth={2.6} />
+                  <Text style={styles.addPhotoText}>Add</Text>
                 </InteractivePressable>
+              ) : null}
+            </ScrollView>
+          ) : (
+            <InteractivePressable
+              accessibilityRole="button"
+              accessibilityLabel={choosePhotosLabel}
+              accessibilityHint="Opens your photo library."
+              accessibilityState={{ disabled: busy }}
+              onPress={pickAgentImages}
+              disabled={busy}
+              style={styles.emptyPhotoPreview}
+            >
+              <View style={styles.emptyPhotoIcon}>
+                <ImageIcon size={28} color={colors.muted} strokeWidth={2.5} />
               </View>
-            ))}
-            {agentImages.length < 6 ? (
-              <InteractivePressable onPress={pickAgentImages} disabled={busy} style={styles.addMoreCard}>
-                <Plus size={24} color={colors.ink} strokeWidth={2.6} />
-              </InteractivePressable>
-            ) : null}
-          </ScrollView>
-        ) : (
-          <InteractivePressable onPress={pickAgentImages} disabled={busy} style={styles.emptyDropZone}>
-            <ImageIcon size={30} color={colors.dim} strokeWidth={2.5} />
-            <Text style={styles.emptyDropText}>Add photos</Text>
-          </InteractivePressable>
-        )}
+              <Text style={styles.emptyPhotoTitle}>{emptyPhotoTitle}</Text>
+              <Text style={styles.emptyPhotoMeta}>{emptyPhotoMeta}</Text>
+            </InteractivePressable>
+          )}
+        </View>
 
         <TextInput
           value={caption}
           onChangeText={setCaption}
           multiline
           placeholder={mode === "label" ? "Optional prompt or serving detail" : "Optional prompt"}
-          placeholderTextColor={colors.dim}
+          placeholderTextColor={colors.muted}
           style={styles.promptInput}
         />
 
         <InteractivePressable
+          accessibilityRole="button"
+          accessibilityLabel={submitPhotoLabel}
+          accessibilityHint="Runs the image nutrition estimate."
+          accessibilityState={{ disabled: submitDisabled, busy }}
           feedbackKind="success"
           onPress={submitImageAgent}
           disabled={submitDisabled}
@@ -418,7 +471,10 @@ export function CaptureModal({
             {mode === "barcode" ? <View style={styles.scanFrame} pointerEvents="none" /> : null}
             <View style={styles.overlayTop}>
               <InteractivePressable
+                accessibilityRole="button"
                 accessibilityLabel={torchOn ? "Turn flashlight off" : "Turn flashlight on"}
+                accessibilityHint="Toggles the barcode scanner flashlight."
+                accessibilityState={{ selected: torchOn }}
                 onPress={() => setTorchOn((value) => !value)}
                 style={[styles.overlayButton, torchOn && styles.overlayButtonOn]}
               >
@@ -457,45 +513,53 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     paddingHorizontal: 2
   },
-  agentHeader: {
-    minHeight: 66,
+  photoPanel: {
+    gap: 12,
+    padding: 12,
+    borderRadius: 22,
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  photoPanelHeader: {
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
-    gap: 12
+    gap: 10
   },
-  agentIcon: {
-    width: 54,
-    height: 54,
-    borderRadius: 18,
+  photoPanelIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.purple,
+    backgroundColor: "rgba(255, 51, 101, 0.14)",
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.18)"
+    borderColor: "rgba(255, 51, 101, 0.34)"
   },
-  agentHeaderText: {
+  photoPanelCopy: {
     flex: 1,
     minWidth: 0
   },
-  agentTitle: {
+  photoPanelTitle: {
     color: colors.ink,
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: "900"
   },
-  agentMeta: {
-    marginTop: 4,
+  photoPanelMeta: {
+    marginTop: 3,
     color: colors.muted,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "800"
   },
-  agentActions: {
+  photoActionRow: {
     flexDirection: "row",
     gap: 10
   },
-  agentActionButton: {
+  photoSourceButton: {
     flex: 1,
-    height: 58,
-    borderRadius: 18,
+    height: 54,
+    borderRadius: 16,
     flexDirection: "row",
     gap: 8,
     alignItems: "center",
@@ -504,30 +568,34 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.line
   },
-  agentActionText: {
+  photoSourceText: {
     color: colors.ink,
     fontSize: 16,
     fontWeight: "900"
   },
-  thumbnailRow: {
-    minHeight: 112,
+  previewRow: {
+    minHeight: 118,
     gap: 10,
-    paddingRight: 4
+    paddingRight: 2
   },
-  thumbnailCard: {
-    width: 104,
-    height: 104,
-    borderRadius: 22,
+  previewCard: {
+    width: 112,
+    height: 112,
+    borderRadius: 18,
     overflow: "hidden",
-    backgroundColor: colors.panel,
+    backgroundColor: colors.bg2,
     borderWidth: 1,
     borderColor: colors.line
   },
-  thumbnailImage: {
-    width: "100%",
-    height: "100%"
+  previewCardBusy: {
+    opacity: 0.74
   },
-  thumbnailIndex: {
+  previewImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover"
+  },
+  previewIndex: {
     position: "absolute",
     left: 8,
     top: 8,
@@ -542,48 +610,72 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     backgroundColor: "rgba(0, 0, 0, 0.62)"
   },
-  removeThumbnail: {
+  removePhotoButton: {
     position: "absolute",
-    right: 7,
-    top: 7,
-    width: 30,
-    height: 30,
+    right: 8,
+    top: 8,
+    width: 34,
+    height: 34,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.66)",
+    backgroundColor: "rgba(17, 17, 17, 0.82)",
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.22)"
+    borderColor: "rgba(255, 255, 255, 0.26)"
   },
-  addMoreCard: {
-    width: 104,
-    height: 104,
-    borderRadius: 22,
+  addPhotoCard: {
+    width: 112,
+    height: 112,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  addPhotoText: {
+    color: colors.ink,
+    fontSize: 14,
+    fontWeight: "900"
+  },
+  emptyPhotoPreview: {
+    minHeight: 136,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    backgroundColor: colors.bg2,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  emptyPhotoIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.panel2,
     borderWidth: 1,
     borderColor: colors.line
   },
-  emptyDropZone: {
-    minHeight: 132,
-    borderRadius: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: colors.panel,
-    borderWidth: 1,
-    borderColor: colors.line
-  },
-  emptyDropText: {
+  emptyPhotoTitle: {
     color: colors.ink,
     fontSize: 17,
     fontWeight: "900"
+  },
+  emptyPhotoMeta: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "800",
+    textAlign: "center"
   },
   promptInput: {
     minHeight: 104,
     borderRadius: 20,
     backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line,
     color: colors.ink,
     fontSize: 17,
     lineHeight: 24,
