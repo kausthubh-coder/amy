@@ -69,7 +69,10 @@ const CALORIE_HIT_OFFSET = (CALORIE_HIT_TARGET - NOTE_LINE_HEIGHT) / 2;
 const LINE_RAIL_WIDTH = 104;
 const NOTE_ROW_GAP = 10;
 const FLOATING_HEADER_HEIGHT = 52;
-const FLOATING_HEADER_GUARD = 42;
+const FLOATING_HEADER_GUARD = 20;
+const FLOATING_PANEL_BG = "rgba(32, 32, 34, 0.72)";
+const FLOATING_PANEL_ACTIVE_BG = "rgba(42, 42, 46, 0.84)";
+const FLOATING_PANEL_LINE = "rgba(255, 255, 255, 0.16)";
 
 if (Platform.OS === "android") {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
@@ -523,8 +526,10 @@ export function TodayScreen({
   const streakCount = useMemo(() => currentStreakDays(data?.entries ?? [], selectedDay), [data?.entries, selectedDay]);
   const lineRows = useMemo(() => buildLineRows(workingText, entries, lineStatuses), [entries, lineStatuses, workingText]);
   const editingEntry = useMemo(() => entries.find((entry) => entry.id === editingEntryId), [editingEntryId, entries]);
-  const floatingHeaderTop = Math.max(insets.top + 44, 76);
-  const contentTopInset = floatingHeaderTop + FLOATING_HEADER_HEIGHT + FLOATING_HEADER_GUARD;
+  const compactChrome = windowWidth < 390;
+  const dockSideInset = windowWidth >= 720 ? Math.max(18, (windowWidth - 720) / 2) : compactChrome ? 14 : 18;
+  const floatingHeaderTop = Math.max(insets.top + (compactChrome ? 4 : 8), compactChrome ? 38 : 40);
+  const contentTopInset = floatingHeaderTop + FLOATING_HEADER_HEIGHT + (compactChrome ? 16 : FLOATING_HEADER_GUARD);
   const keyboardDockOffset =
     inputFocused && keyboardOpen && keyboardHeight > 0
       ? Platform.OS === "ios"
@@ -937,41 +942,41 @@ export function TodayScreen({
       onTouchEnd={finishTouchSwipe}
       {...panResponder.panHandlers}
     >
-      <View style={[styles.top, { top: floatingHeaderTop }]}>
-        <Image source={require("../../assets/icon-cat-alt.png")} style={styles.logo} />
+      <View style={[styles.top, compactChrome && styles.topCompact, { top: floatingHeaderTop }]}>
+        <Image source={require("../../assets/icon-cat-alt.png")} style={[styles.logo, compactChrome && styles.logoCompact]} />
         <InteractivePressable
           accessibilityRole="button"
           accessibilityLabel="Jump to today"
           accessibilityHint="Returns the log to today's date."
           onPress={() => shiftDay(0)}
-          style={styles.todayPill}
+          style={[styles.todayPill, compactChrome && styles.todayPillCompact]}
         >
-          <Text style={styles.todayText}>{labelForDay(selectedDay)}</Text>
+          <Text style={[styles.todayText, compactChrome && styles.todayTextCompact]}>{labelForDay(selectedDay)}</Text>
         </InteractivePressable>
-        <View style={styles.topActions}>
+        <View style={[styles.topActions, compactChrome && styles.topActionsCompact]}>
           <InteractivePressable
             accessibilityRole="button"
             accessibilityLabel={`${streakCount} day streak`}
             accessibilityHint="Opens stats and streak details."
             onPress={() => openModal("stats")}
-            style={styles.streakPill}
+            style={[styles.streakPill, compactChrome && styles.streakPillCompact]}
           >
-            <Flame size={20} color={colors.orange} fill={colors.orange} strokeWidth={2.2} />
-            <Text style={styles.streakText}>{streakCount}</Text>
+            <Flame size={compactChrome ? 18 : 20} color={colors.orange} fill={colors.orange} strokeWidth={2.2} />
+            <Text style={[styles.streakText, compactChrome && styles.streakTextCompact]}>{streakCount}</Text>
           </InteractivePressable>
           <InteractivePressable
             accessibilityRole="button"
             accessibilityLabel="Open settings"
             accessibilityHint="Edit goals, AI settings, import, export, and app preferences."
             onPress={() => openModal("settings")}
-            style={styles.settingsPill}
+            style={[styles.settingsPill, compactChrome && styles.settingsPillCompact]}
           >
-            <Settings size={22} color={colors.ink} strokeWidth={2.5} />
+            <Settings size={compactChrome ? 20 : 22} color={colors.ink} strokeWidth={2.5} />
           </InteractivePressable>
         </View>
       </View>
 
-      <View style={[styles.body, { paddingTop: contentTopInset, paddingBottom: dockReserve }]}>
+      <View style={styles.body}>
         <View style={styles.logArea}>
           <View style={styles.noteColumn}>
             <TextInput
@@ -993,7 +998,7 @@ export function TodayScreen({
               onScroll={(event) => setNoteScrollY(event.nativeEvent.contentOffset.y)}
               placeholder="Start logging your meals..."
               placeholderTextColor={colors.dim}
-              style={styles.noteInput}
+              style={[styles.noteInput, { paddingTop: contentTopInset, paddingBottom: dockReserve }]}
             />
 
             <View pointerEvents="none" style={styles.measureLayer}>
@@ -1010,39 +1015,45 @@ export function TodayScreen({
           </View>
 
           <View style={styles.lineRailViewport}>
-            <View style={[styles.lineRail, { transform: [{ translateY: -noteScrollY }] }]}>
-              {lineRows.map((row) => {
-                const activePhase = row.status?.phase && row.status.phase !== "done" ? row.status.phase : undefined;
-                const label = activePhase ? phaseText[activePhase] : row.entry ? `${row.entry.macros.calories.toLocaleString()} cal` : "";
-                const canEdit = Boolean(row.entry);
-                const rowHeight = lineHeights[row.key] ?? NOTE_LINE_HEIGHT;
-                return (
-                  <View key={row.key} style={[styles.lineRailSlot, { height: rowHeight }]}>
-                    {canEdit ? (
-                      <InteractivePressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Edit ${row.entry?.title ?? "food"}, ${label}`}
-                        accessibilityHint="Opens the nutrition editor for this log line."
-                        feedbackKind="edit"
-                        onPress={() => setEditingEntryId(row.entry?.id ?? null)}
-                        style={styles.lineCalorieHit}
-                      >
+            <View style={[styles.lineRailClip, { marginTop: contentTopInset, marginBottom: dockReserve }]}>
+              <View style={[styles.lineRail, { transform: [{ translateY: -noteScrollY }] }]}>
+                {lineRows.map((row) => {
+                  const activePhase = row.status?.phase && row.status.phase !== "done" ? row.status.phase : undefined;
+                  const label = activePhase ? phaseText[activePhase] : row.entry ? `${row.entry.macros.calories.toLocaleString()} cal` : "";
+                  const canEdit = Boolean(row.entry);
+                  const rowHeight = lineHeights[row.key] ?? NOTE_LINE_HEIGHT;
+                  return (
+                    <View key={row.key} style={[styles.lineRailSlot, { height: rowHeight }]}>
+                      {canEdit ? (
+                        <InteractivePressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`Edit ${row.entry?.title ?? "food"}, ${label}`}
+                          accessibilityHint="Opens the nutrition editor for this log line."
+                          feedbackKind="edit"
+                          onPress={() => setEditingEntryId(row.entry?.id ?? null)}
+                          style={styles.lineCalorieHit}
+                        >
+                          <Text style={styles.sideCalories}>{label}</Text>
+                        </InteractivePressable>
+                      ) : activePhase ? (
+                        <PhaseIndicator phase={activePhase} />
+                      ) : (
                         <Text style={styles.sideCalories}>{label}</Text>
-                      </InteractivePressable>
-                    ) : activePhase ? (
-                      <PhaseIndicator phase={activePhase} />
-                    ) : (
-                      <Text style={styles.sideCalories}>{label}</Text>
-                    )}
-                  </View>
-                );
-              })}
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
             </View>
           </View>
         </View>
-
-        <View style={styles.noticeArea}>{notice ? <Text style={styles.notice}>{notice}</Text> : null}</View>
       </View>
+
+      {notice ? (
+        <View pointerEvents="none" style={[styles.noticeArea, { bottom: dockBottom + 64 }]}>
+          <Text style={styles.notice}>{notice}</Text>
+        </View>
+      ) : null}
 
       {calorieOverlayVisible ? (
         <View style={[styles.calorieOverlay, { bottom: dockBottom + 66 }]}>
@@ -1065,7 +1076,7 @@ export function TodayScreen({
         </View>
       ) : null}
 
-      <View style={[styles.dock, { bottom: dockBottom }]}>
+      <View style={[styles.dock, compactChrome && styles.dockCompact, { left: dockSideInset, right: dockSideInset, bottom: dockBottom }]}>
         <InteractivePressable
           accessibilityRole="button"
           accessibilityLabel={calorieOverlayVisible ? "Hide calorie details" : "Show calorie details"}
@@ -1074,7 +1085,7 @@ export function TodayScreen({
             Keyboard.dismiss();
             setCalorieOverlayVisible((visible) => !visible);
           }}
-          style={[styles.caloriePill, calorieOverlayVisible && styles.caloriePillActive]}
+          style={[styles.caloriePill, compactChrome && styles.caloriePillCompact, calorieOverlayVisible && styles.caloriePillActive]}
         >
           <Text style={styles.calorieEmoji}>🔥</Text>
           <Text style={styles.caloriePillText}>{totals.calories.toLocaleString()}</Text>
@@ -1085,36 +1096,36 @@ export function TodayScreen({
           accessibilityHint="Dictates a meal into today's log."
           accessibilityState={{ selected: listening }}
           onPress={toggleDictation}
-          style={[styles.roundButton, listening && styles.roundButtonOn]}
+          style={[styles.roundButton, compactChrome && styles.roundButtonCompact, listening && styles.roundButtonOn]}
         >
-          <Mic size={24} color={listening ? colors.ink : colors.blue} strokeWidth={2.6} />
+          <Mic size={compactChrome ? 22 : 24} color={listening ? colors.ink : colors.blue} strokeWidth={2.6} />
         </InteractivePressable>
         <InteractivePressable
           accessibilityRole="button"
           accessibilityLabel="Open meal photo capture"
           accessibilityHint="Take or choose meal photos to estimate nutrition."
           onPress={() => openModal("capture", "photo")}
-          style={styles.roundButton}
+          style={[styles.roundButton, compactChrome && styles.roundButtonCompact]}
         >
-          <Camera size={24} color={colors.pink} strokeWidth={2.6} />
+          <Camera size={compactChrome ? 22 : 24} color={colors.pink} strokeWidth={2.6} />
         </InteractivePressable>
         <InteractivePressable
           accessibilityRole="button"
           accessibilityLabel="Open saved meals"
           accessibilityHint="Add a saved meal to today's log."
           onPress={() => openModal("saved")}
-          style={styles.roundButton}
+          style={[styles.roundButton, compactChrome && styles.roundButtonCompact]}
         >
-          <Plus size={26} color={colors.orange} strokeWidth={2.8} />
+          <Plus size={compactChrome ? 24 : 26} color={colors.orange} strokeWidth={2.8} />
         </InteractivePressable>
         <InteractivePressable
           accessibilityRole="button"
           accessibilityLabel="Scan barcode"
           accessibilityHint="Scan a packaged food with Open Food Facts."
           onPress={() => openModal("capture", "barcode")}
-          style={styles.roundButton}
+          style={[styles.roundButton, compactChrome && styles.roundButtonCompact]}
         >
-          <Barcode size={24} color={colors.ink} strokeWidth={2.4} />
+          <Barcode size={compactChrome ? 22 : 24} color={colors.ink} strokeWidth={2.4} />
         </InteractivePressable>
       </View>
 
@@ -1141,6 +1152,10 @@ const styles = StyleSheet.create({
     zIndex: 20,
     elevation: 20
   },
+  topCompact: {
+    left: 14,
+    right: 14
+  },
   logo: {
     width: 46,
     height: 46,
@@ -1148,6 +1163,11 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     top: 3
+  },
+  logoCompact: {
+    width: 42,
+    height: 42,
+    top: 5
   },
   topActions: {
     position: "absolute",
@@ -1157,6 +1177,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8
   },
+  topActionsCompact: {
+    gap: 6
+  },
   todayPill: {
     minWidth: 116,
     maxWidth: 164,
@@ -1165,14 +1188,22 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.panel,
+    backgroundColor: FLOATING_PANEL_BG,
     borderWidth: 1,
-    borderColor: colors.line
+    borderColor: FLOATING_PANEL_LINE
+  },
+  todayPillCompact: {
+    minWidth: 104,
+    height: 44,
+    paddingHorizontal: 14
   },
   todayText: {
     color: colors.ink,
     fontSize: 18,
     fontWeight: "900"
+  },
+  todayTextCompact: {
+    fontSize: 16
   },
   streakPill: {
     height: 48,
@@ -1184,9 +1215,15 @@ const styles = StyleSheet.create({
     paddingRight: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.panel,
+    backgroundColor: FLOATING_PANEL_BG,
     borderWidth: 1,
-    borderColor: colors.line
+    borderColor: FLOATING_PANEL_LINE
+  },
+  streakPillCompact: {
+    height: 44,
+    minWidth: 62,
+    paddingLeft: 14,
+    paddingRight: 12
   },
   settingsPill: {
     height: 48,
@@ -1194,18 +1231,24 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.panel,
+    backgroundColor: FLOATING_PANEL_BG,
     borderWidth: 1,
-    borderColor: colors.line
+    borderColor: FLOATING_PANEL_LINE
+  },
+  settingsPillCompact: {
+    height: 44,
+    width: 44
   },
   streakText: {
     color: colors.ink,
     fontSize: 19,
     fontWeight: "900"
   },
+  streakTextCompact: {
+    fontSize: 17
+  },
   body: {
-    flex: 1,
-    gap: 10
+    flex: 1
   },
   logArea: {
     flex: 1,
@@ -1247,6 +1290,10 @@ const styles = StyleSheet.create({
   lineRailViewport: {
     width: LINE_RAIL_WIDTH,
     alignSelf: "stretch",
+    overflow: "hidden"
+  },
+  lineRailClip: {
+    flex: 1,
     overflow: "hidden"
   },
   lineRail: {
@@ -1294,13 +1341,25 @@ const styles = StyleSheet.create({
     color: colors.pink
   },
   noticeArea: {
-    minHeight: 20,
-    justifyContent: "flex-start"
+    position: "absolute",
+    left: 18,
+    right: 18,
+    alignItems: "center",
+    zIndex: 14,
+    elevation: 14
   },
   notice: {
-    color: colors.muted,
+    color: colors.ink,
     fontSize: 14,
-    fontWeight: "800"
+    fontWeight: "800",
+    textAlign: "center",
+    overflow: "hidden",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
   },
   dock: {
     position: "absolute",
@@ -1311,6 +1370,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 7
   },
+  dockCompact: {
+    left: 14,
+    right: 14,
+    gap: 6
+  },
   caloriePill: {
     flex: 1,
     minWidth: 92,
@@ -1320,12 +1384,16 @@ const styles = StyleSheet.create({
     gap: 6,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.panel,
+    backgroundColor: FLOATING_PANEL_BG,
     borderWidth: 1,
-    borderColor: colors.line
+    borderColor: FLOATING_PANEL_LINE
+  },
+  caloriePillCompact: {
+    minWidth: 84,
+    height: 50
   },
   caloriePillActive: {
-    backgroundColor: colors.panel2,
+    backgroundColor: FLOATING_PANEL_ACTIVE_BG,
     borderColor: colors.green
   },
   caloriePillText: {
@@ -1396,9 +1464,13 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.panel,
+    backgroundColor: FLOATING_PANEL_BG,
     borderWidth: 1,
-    borderColor: colors.line
+    borderColor: FLOATING_PANEL_LINE
+  },
+  roundButtonCompact: {
+    width: 46,
+    height: 46
   },
   roundButtonOn: {
     backgroundColor: colors.purple

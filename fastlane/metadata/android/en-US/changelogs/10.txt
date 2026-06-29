@@ -1,0 +1,6 @@
+Amy 1.0.8 fixes Today layout behavior across phone and tablet viewports.
+
+- Moves Today's floating top controls higher and keeps the notes surface full-page.
+- Clips the calorie rail so scrolled calories no longer bleed over the header or status area.
+- Keeps the bottom dock compact on narrow phones and capped on wider screens.
+- Updates public distribution, release, and source-available readiness docs.

@@ -4,7 +4,7 @@
     "description": "Android-first calorie tracking built around fast line-by-line meal logging.",
     "slug": "amy-calorie-tracker",
     "scheme": "amy",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "orientation": "portrait",
     "icon": "./assets/icon-cat-alt.png",
     "userInterfaceStyle": "automatic",
@@ -18,7 +18,7 @@
     },
     "android": {
       "package": "com.kaust.amy",
-      "versionCode": 9,
+      "versionCode": 10,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.CAMERA",

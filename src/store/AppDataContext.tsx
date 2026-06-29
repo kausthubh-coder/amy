@@ -220,7 +220,7 @@ export function LocalDataProvider({ children }: { children: ReactNode }) {
       updateGoal: (goal) =>
         commit((current) => {
           const dailyCalories = goal.dailyCalories ?? current.goal.dailyCalories;
-          return { ...current, goal: { ...current.goal, ...targetsFromCalories(dailyCalories), ...goal, dailyCalories }, updatedAt: nowIso() };
+          return { ...current, goal: { ...current.goal, ...goal, dailyCalories }, updatedAt: nowIso() };
         }),
       updateSettings: (settings) =>
         commit((current) => ({ ...current, settings: { ...current.settings, ...settings }, updatedAt: nowIso() })),

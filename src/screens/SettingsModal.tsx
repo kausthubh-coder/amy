@@ -3,7 +3,7 @@ import { File, Paths } from "expo-file-system";
 import { StorageAccessFramework } from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { Copy, Download, FileText, Save, ShieldCheck, Upload } from "lucide-react-native";
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { Platform, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 
 import { InteractivePressable } from "../components/InteractivePressable";
@@ -83,6 +83,11 @@ function numberFromInput(value: string, fallback: number) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
 }
 
+function macroGrams(value: string) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+}
+
 function goalStatus(currentWeight: number, goalWeight: number) {
   const delta = currentWeight - goalWeight;
   if (Math.abs(delta) < 0.5) {
@@ -137,6 +142,9 @@ function DataCount({ label, value }: { label: string; value: number }) {
 export function SettingsModal() {
   const { data, selectedDay, updateGoal, updateSettings, logWeight, exportText, importText } = useAppData();
   const [calories, setCalories] = useState(String(data?.goal.dailyCalories ?? 2632));
+  const [carbs, setCarbs] = useState(String(data?.goal.carbsTarget ?? 0));
+  const [protein, setProtein] = useState(String(data?.goal.proteinTarget ?? 0));
+  const [fat, setFat] = useState(String(data?.goal.fatTarget ?? 0));
   const [currentWeight, setCurrentWeight] = useState(String(data?.goal.currentWeightLbs ?? 218));
   const [goalWeight, setGoalWeight] = useState(String(data?.goal.weightGoalLbs ?? 154));
   const [weightNote, setWeightNote] = useState("");
@@ -147,33 +155,42 @@ export function SettingsModal() {
   const [notice, setNotice] = useState("");
 
   const pendingCalories = numberFromInput(calories, data?.goal.dailyCalories ?? 2632);
-  const macroTargets = useMemo(() => targetsFromCalories(pendingCalories), [pendingCalories]);
 
   if (!data) return null;
 
   const pendingCurrentWeight = numberFromInput(currentWeight, data.goal.currentWeightLbs);
   const pendingGoalWeight = numberFromInput(goalWeight, data.goal.weightGoalLbs);
   const pendingStatus = goalStatus(pendingCurrentWeight, pendingGoalWeight);
-  const macroRows = [
-    { label: "Carbs", color: colors.pink, saved: data.goal.carbsTarget, pending: macroTargets.carbsTarget },
-    { label: "Protein", color: colors.blue, saved: data.goal.proteinTarget, pending: macroTargets.proteinTarget },
-    { label: "Fat", color: colors.yellow, saved: data.goal.fatTarget, pending: macroTargets.fatTarget }
+  const macroFields = [
+    { key: "carbs", label: "Carbs", color: colors.pink, value: carbs, onChange: setCarbs },
+    { key: "protein", label: "Protein", color: colors.blue, value: protein, onChange: setProtein },
+    { key: "fat", label: "Fat", color: colors.yellow, value: fat, onChange: setFat }
   ];
-  const macrosChanged = macroRows.some((macro) => macro.saved !== macro.pending);
+  const macroCalories = Math.round(macroGrams(carbs) * 4 + macroGrams(protein) * 4 + macroGrams(fat) * 9);
   const hasImportValue = importValue.trim().length > 0;
+
+  const autoBalanceMacros = () => {
+    const balanced = targetsFromCalories(pendingCalories);
+    setCarbs(String(balanced.carbsTarget));
+    setProtein(String(balanced.proteinTarget));
+    setFat(String(balanced.fatTarget));
+    setNotice("Macros balanced from calories. Tap Save goals to keep them.");
+  };
 
   const saveGoals = () => {
     updateGoal({
       dailyCalories: pendingCalories,
-      currentWeightLbs: pendingCurrentWeight,
-      weightGoalLbs: pendingGoalWeight
+      carbsTarget: Math.round(macroGrams(carbs)),
+      proteinTarget: Math.round(macroGrams(protein)),
+      fatTarget: Math.round(macroGrams(fat))
     });
     setNotice("Goals saved.");
   };
 
   const saveWeightLog = () => {
-    const weight = Number(currentWeight) || data.goal.currentWeightLbs;
+    const weight = numberFromInput(currentWeight, data.goal.currentWeightLbs);
     logWeight(selectedDay, weight, weightNote);
+    updateGoal({ currentWeightLbs: weight, weightGoalLbs: pendingGoalWeight });
     setWeightNote("");
     setNotice(`Weight logged for ${labelForDay(selectedDay)}.`);
   };
@@ -280,28 +297,51 @@ export function SettingsModal() {
   return (
     <View style={styles.stack}>
       <View style={styles.card}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.section}>Goals & Targets</Text>
-          <View style={styles.statusPill}>
-            <Text style={styles.statusPillText}>{pendingStatus.type}</Text>
-          </View>
-        </View>
-
-        <View style={styles.goalSummary}>
-          <View style={styles.goalSummaryMain}>
-            <Text style={styles.goalKicker}>Custom daily target</Text>
-            <Text style={styles.weight}>🔥 {formatNumber(pendingCalories)}</Text>
-            <Text style={styles.goalLine}>Saved goal {formatNumber(data.goal.dailyCalories)} cal</Text>
-          </View>
-          <View style={styles.goalStatusBox}>
-            <Text style={styles.goalStatusType}>Goal status</Text>
-            <Text style={styles.goalStatusText}>{pendingStatus.status}</Text>
-          </View>
-        </View>
+        <Text style={styles.section}>Goals & Targets</Text>
 
         <View style={styles.fieldGroup}>
           <Text style={styles.fieldLabel}>Daily calories</Text>
           <TextInput value={calories} onChangeText={setCalories} keyboardType="number-pad" placeholder="Calories" placeholderTextColor={colors.muted} style={styles.input} />
+        </View>
+
+        <View style={styles.macroHeaderRow}>
+          <Text style={styles.fieldLabel}>Macro targets (grams)</Text>
+          <InteractivePressable accessibilityRole="button" accessibilityLabel="Auto-balance macros from calories" onPress={autoBalanceMacros} style={styles.autoButton}>
+            <Text style={styles.autoButtonText}>Auto-balance</Text>
+          </InteractivePressable>
+        </View>
+        <View style={styles.macroInputRow}>
+          {macroFields.map((macro) => (
+            <View key={macro.key} style={styles.macroInputField}>
+              <View style={styles.macroInputLabelRow}>
+                <View style={[styles.macroDot, { backgroundColor: macro.color }]} />
+                <Text style={styles.macroInputLabel}>{macro.label}</Text>
+              </View>
+              <TextInput
+                value={macro.value}
+                onChangeText={macro.onChange}
+                keyboardType="number-pad"
+                placeholder="0"
+                placeholderTextColor={colors.muted}
+                style={styles.macroTargetInput}
+              />
+            </View>
+          ))}
+        </View>
+        <Text style={styles.macroCalHint}>≈ {formatNumber(macroCalories)} cal from macros · target {formatNumber(pendingCalories)} cal</Text>
+
+        <InteractivePressable feedbackKind="success" onPress={saveGoals} style={styles.primaryButton}>
+          <Save size={18} color={colors.ink} strokeWidth={3} />
+          <Text style={styles.primaryText}>Save goals</Text>
+        </InteractivePressable>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.section}>Weight Tracking</Text>
+          <View style={styles.statusPill}>
+            <Text style={styles.statusPillText}>{pendingStatus.type}</Text>
+          </View>
         </View>
         <View style={styles.twoCol}>
           <View style={styles.fieldGroup}>
@@ -313,45 +353,10 @@ export function SettingsModal() {
             <TextInput value={goalWeight} onChangeText={setGoalWeight} keyboardType="number-pad" placeholder="Goal lbs" placeholderTextColor={colors.muted} style={styles.input} />
           </View>
         </View>
-        <View style={styles.macroTargetPanel}>
-          <View style={styles.macroTargetHeader}>
-            <Text style={styles.goalLine}>Macro targets</Text>
-            <Text style={styles.goalLine}>{macrosChanged ? "Pending after save" : "Current"}</Text>
-          </View>
-          {macroRows.map((macro) => (
-            <View key={macro.label} style={styles.macroTargetRow}>
-              <View style={styles.macroTargetName}>
-                <View style={[styles.macroDot, { backgroundColor: macro.color }]} />
-                <Text style={styles.macroTargetLabel}>{macro.label}</Text>
-              </View>
-              <View style={styles.macroTargetValues}>
-                <Text style={styles.macroTargetValue}>{macro.pending}g</Text>
-                <Text style={styles.macroTargetHint}>{macrosChanged ? `Saved ${macro.saved}g` : "Daily target"}</Text>
-              </View>
-            </View>
-          ))}
-        </View>
-        <InteractivePressable feedbackKind="success" onPress={saveGoals} style={styles.primaryButton}>
-          <Save size={18} color={colors.ink} strokeWidth={3} />
-          <Text style={styles.primaryText}>Save goals</Text>
-        </InteractivePressable>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.section}>Weight Tracking</Text>
-        <View style={styles.weightSummary}>
-          <View>
-            <Text style={styles.weight}>{data.goal.currentWeightLbs} lbs</Text>
-            <Text style={styles.goalLine}>Goal {data.goal.weightGoalLbs} lbs</Text>
-          </View>
-          <View style={styles.keyState}>
-            <Text style={styles.keyStateText}>{data.weightLogs.length}</Text>
-          </View>
-        </View>
-        <TextInput value={currentWeight} onChangeText={setCurrentWeight} keyboardType="number-pad" placeholder="Current lbs" placeholderTextColor={colors.muted} style={styles.input} />
+        <Text style={styles.goalLine}>{pendingStatus.status}</Text>
         <TextInput value={weightNote} onChangeText={setWeightNote} placeholder="Note, optional" placeholderTextColor={colors.muted} style={styles.input} />
         <InteractivePressable feedbackKind="success" onPress={saveWeightLog} style={styles.secondaryButton}>
-          <Text style={styles.secondaryText}>Log weight</Text>
+          <Text style={styles.secondaryText}>Log weight & update goal</Text>
         </InteractivePressable>
         <View style={styles.weightHistory}>
           {data.weightLogs.slice(0, 5).map((log) => (
@@ -525,54 +530,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "900"
   },
-  goalHeader: {
-    gap: 5
-  },
-  goalSummary: {
-    minHeight: 126,
-    borderRadius: 22,
-    padding: 15,
-    flexDirection: "row",
-    alignItems: "stretch",
-    gap: 12,
-    backgroundColor: colors.panel2
-  },
-  goalSummaryMain: {
-    flex: 1,
-    justifyContent: "center",
-    minWidth: 0
-  },
-  goalKicker: {
-    color: colors.muted,
-    fontSize: 13,
-    fontWeight: "900"
-  },
-  goalStatusBox: {
-    width: 116,
-    borderRadius: 18,
-    paddingHorizontal: 12,
-    justifyContent: "center",
-    backgroundColor: colors.panel,
-    borderWidth: 1,
-    borderColor: colors.line
-  },
-  goalStatusType: {
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "900"
-  },
-  goalStatusText: {
-    marginTop: 5,
-    color: colors.ink,
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: "900"
-  },
-  weight: {
-    color: colors.ink,
-    fontSize: 31,
-    fontWeight: "900"
-  },
   goalLine: {
     color: colors.muted,
     fontSize: 14,
@@ -691,61 +648,64 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "900"
   },
-  macroTargetPanel: {
-    gap: 10,
-    borderRadius: 22,
-    padding: 14,
-    backgroundColor: colors.panel2
-  },
-  macroTargetHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10
-  },
-  macroTargetRow: {
-    minHeight: 48,
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    backgroundColor: colors.panel
-  },
-  macroTargetName: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9
-  },
   macroDot: {
     width: 10,
     height: 10,
     borderRadius: 999
   },
-  macroTargetLabel: {
-    color: colors.ink,
-    fontSize: 15,
-    fontWeight: "900"
-  },
-  macroTargetValues: {
-    alignItems: "flex-end"
-  },
-  macroTargetValue: {
-    color: colors.ink,
-    fontSize: 17,
-    fontWeight: "900"
-  },
-  macroTargetHint: {
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: "800"
-  },
-  weightSummary: {
+  macroHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12
+  },
+  autoButton: {
+    minHeight: 34,
+    borderRadius: 999,
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  autoButtonText: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900"
+  },
+  macroInputRow: {
+    flexDirection: "row",
+    gap: 10
+  },
+  macroInputField: {
+    flex: 1,
+    minWidth: 0,
+    gap: 7
+  },
+  macroInputLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7
+  },
+  macroInputLabel: {
+    color: colors.ink,
+    fontSize: 14,
+    fontWeight: "900"
+  },
+  macroTargetInput: {
+    minHeight: 54,
+    borderRadius: 17,
+    backgroundColor: colors.panel2,
+    color: colors.ink,
+    fontSize: 18,
+    fontWeight: "900",
+    paddingHorizontal: 12,
+    textAlign: "center"
+  },
+  macroCalHint: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "800"
   },
   weightHistory: {
     gap: 8
