@@ -1,0 +1,6 @@
+Amy 1.0.9 restores the richer mini Today widget and improves public launch docs.
+
+- Restores the widget note/content area with calorie and macro context.
+- Keeps mic, camera, saved meals, and barcode actions in the widget.
+- Adds a community outreach plan for Reddit, F-Droid, and source-available distribution.
+- Refreshes README and F-Droid readiness docs for new testers.

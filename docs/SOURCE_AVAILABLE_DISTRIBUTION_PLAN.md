@@ -17,8 +17,8 @@ Amy already has:
 - Public GitHub repo: `https://github.com/kausthubh-coder/amy`
 - GitHub Releases download page: `https://github.com/kausthubh-coder/amy/releases/latest`
 - Android package: `com.kaust.amy`
-- Current source version: `1.0.8`
-- Current Android `versionCode`: `10`
+- Current source version: `1.0.9`
+- Current Android `versionCode`: `11`
 - Fastlane metadata in `fastlane/metadata/android/en-US/`
 - Screenshots in `docs/screenshots/` and Fastlane phone screenshots
 - README, CONTRIBUTING, privacy notes, distribution notes, release process, third-party notices, and a license file
@@ -122,6 +122,8 @@ License: PolyForm Noncommercial License 1.0.0
 
 I'm looking for install feedback, Android layout issues, widget launcher reports, and source-available distribution feedback.
 ```
+
+The detailed Reddit/community playbook lives in [COMMUNITY_OUTREACH.md](COMMUNITY_OUTREACH.md).
 
 ## Recommended Next Steps
 

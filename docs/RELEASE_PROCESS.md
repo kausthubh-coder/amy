@@ -10,12 +10,12 @@ Every release should keep these values aligned:
 
 | Surface | File or location | Current value |
 | --- | --- | --- |
-| App version | `package.json` | `1.0.8` |
-| Expo version | `app.json` | `1.0.8` |
-| Android `versionCode` | `app.json` | `10` |
+| App version | `package.json` | `1.0.9` |
+| Expo version | `app.json` | `1.0.9` |
+| Android `versionCode` | `app.json` | `11` |
 | Android package | `app.json` | `com.kaust.amy` |
-| Fastlane changelog | `fastlane/metadata/android/en-US/changelogs/10.txt` | versionCode `10` |
-| Git tag | Git/GitHub | `v1.0.8` |
+| Fastlane changelog | `fastlane/metadata/android/en-US/changelogs/11.txt` | versionCode `11` |
+| Git tag | Git/GitHub | `v1.0.9` |
 | Release channel | GitHub Releases | `https://github.com/kausthubh-coder/amy/releases/latest` |
 
 For a new release:
@@ -60,7 +60,7 @@ Generated `android/` and `ios/` folders remain out of git unless a maintainer ex
 Build local release candidates from a clean temp copy so generated native output and APKs stay out of the source tree:
 
 ```sh
-BUILD_DIR="$(mktemp -d /private/tmp/amy-v1.0.8-build.XXXXXX)"
+BUILD_DIR="$(mktemp -d /private/tmp/amy-v1.0.9-build.XXXXXX)"
 rsync -a --delete \
   --exclude='.git' \
   --exclude='node_modules' \
@@ -104,9 +104,9 @@ After building, verify metadata and checksums before publishing.
 Common local checks:
 
 ```sh
-aapt2 dump badging builds/amy-1.0.8-release.apk
-apksigner verify --print-certs builds/amy-1.0.8-release.apk
-shasum -a 256 builds/amy-1.0.8-release.apk
+aapt2 dump badging builds/amy-1.0.9-release.apk
+apksigner verify --print-certs builds/amy-1.0.9-release.apk
+shasum -a 256 builds/amy-1.0.9-release.apk
 ```
 
 Record in the release notes:

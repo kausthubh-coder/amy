@@ -1,6 +1,6 @@
 # Amy F-Droid Readiness Audit
 
-Last updated: 2026-06-27
+Last updated: 2026-06-29
 
 ## Verdict
 
@@ -25,8 +25,8 @@ The blocker is licensing. Amy is currently licensed under PolyForm Noncommercial
 | Public source | Pass | Source is public at `https://github.com/kausthubh-coder/amy`. |
 | FLOSS license | Blocked | Current license is PolyForm Noncommercial License 1.0.0. Official F-Droid main needs a recognized FLOSS license. |
 | Android package id | Pass | `com.kaust.amy` in `app.json`. |
-| Version metadata | Pass | Current source uses version `1.0.8` and Android `versionCode` `10`. |
-| Release tags | Pass | `v1.0.8` exists on origin after the current release. Keep every release tag aligned with source metadata. |
+| Version metadata | Pass | Current source uses version `1.0.9` and Android `versionCode` `11`. |
+| Release tags | Pass | `v1.0.9` exists on origin after the current release. Keep every release tag aligned with source metadata. |
 | Source build recipe | Partial | `npm run prebuild:android` can generate native Android files; an `fdroiddata` recipe still needs to be tested. |
 | Generated native source | Intentional | `android/` is ignored and untracked. F-Droid should regenerate it during the build unless a maintainer chooses to commit generated native output. |
 | Signing | Needs release discipline | F-Droid signs official builds itself. GitHub Release APKs should use EAS signing or a release key, not the Android debug certificate. |
@@ -67,6 +67,19 @@ Compatibility still needs real-world reports for:
 
 Do not submit Amy to official F-Droid main while the project remains PolyForm Noncommercial.
 
+## Official Submission Path
+
+If Amy is relicensed for official F-Droid main, the practical path is:
+
+1. Keep the release source public and tag each release commit, for example `v1.0.9` for version `1.0.9`.
+2. Keep upstream Fastlane metadata in `fastlane/metadata/android/en-US/`, including changelogs named by Android `versionCode`.
+3. Fork `fdroiddata` and add `metadata/com.kaust.amy.yml`.
+4. Describe the app metadata, source repository, issue tracker, FLOSS license, anti-features, build block, `AutoUpdateMode`, `UpdateCheckMode`, `CurrentVersion`, and `CurrentVersionCode`.
+5. Test metadata with `fdroid rewritemeta`, `fdroid lint`, `fdroid checkupdates --allow-dirty`, and `fdroid build`.
+6. Open a merge request to `fdroiddata` and answer reviewer questions.
+
+F-Droid builds from source and signs official builds itself. EAS or GitHub Release APKs can be useful release artifacts, but they are not a substitute for an accepted source-built `fdroiddata` recipe.
+
 ## Practical `fdroiddata` Recipe Outline
 
 This is an outline, not a tested metadata file:
@@ -83,9 +96,9 @@ RepoType: git
 Repo: https://github.com/kausthubh-coder/amy.git
 
 Builds:
-  - versionName: 1.0.8
-    versionCode: 10
-    commit: v1.0.8
+  - versionName: 1.0.9
+    versionCode: 11
+    commit: v1.0.9
     sudo:
       - apt-get update
       - apt-get install -y nodejs npm
@@ -97,8 +110,8 @@ Builds:
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 1.0.8
-CurrentVersionCode: 10
+CurrentVersion: 1.0.9
+CurrentVersionCode: 11
 ```
 
 The real recipe will need exact F-Droid build-server toolchain decisions, dependency review, Gradle output path configuration, and any required scan ignores or anti-feature metadata.
