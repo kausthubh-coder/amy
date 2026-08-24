@@ -83,7 +83,8 @@ gradle.taskGraph.whenReady { graph ->
         def isPackage = name.contains("assemble") || name.contains("bundle") || name.contains("package")
         isRelease && isPackage
     }
-    if (needsReleaseSigning && !amyReleaseSigningReady) {
+    def amyOnEas = System.getenv("EAS_BUILD") == "true"
+    if (needsReleaseSigning && !amyReleaseSigningReady && !amyOnEas) {
         throw new GradleException(
             "Refusing to produce a release APK/AAB without a developer release key. " +
             "Set MYAPP_UPLOAD_STORE_FILE, MYAPP_UPLOAD_STORE_PASSWORD, MYAPP_UPLOAD_KEY_ALIAS, " +
