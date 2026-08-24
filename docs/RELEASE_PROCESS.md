@@ -125,7 +125,7 @@ Rename the arm64 file before upload, for example `amy-1.0.10-arm64-v8a-release.a
 
 `npm run build:local:android` still builds every ABI split. Use `build:local:android:arm64` when you only need the Izzy artifact.
 
-Native libraries are stored compressed in the APK (`expo.useLegacyPackaging`) so the arm64 file stays near Izzy's ~30MB guideline. From the v1.0.9 universal APK, arm64-only + compressed `.so` files estimate at **about 25MB**. Hermes, the JS bundle, remaining native libs (including ML Kit barcode / `libbarhopper_v3.so`), and dex still make up that size.
+Native libraries are stored compressed in the APK via `packaging.jniLibs.useLegacyPackaging` in `plugins/amy-release.gradle` so the arm64 file stays near Izzy's ~30MB guideline. Do not set `expo.useLegacyPackaging` or `android.bundle.enableUncompressedNativeLibs` in gradle.properties; both map to a Gradle option removed in AGP 8.1. From the v1.0.9 universal APK, arm64-only + compressed `.so` files estimate at **about 25MB**. Hermes, the JS bundle, remaining native libs (including ML Kit barcode / `libbarhopper_v3.so`), and dex still make up that size.
 
 ## EAS APK Build
 
