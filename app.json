@@ -38,6 +38,7 @@
     },
     "plugins": [
       "./plugins/withAmyAndroidWidgets",
+      "./plugins/withAmyReleaseAndroid",
       [
         "expo-status-bar",
         {

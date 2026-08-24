@@ -175,7 +175,7 @@ export async function lookupOpenFoodFactsProduct(barcode: string, day: string): 
 
   const url = `${integrationConfig.openFoodFacts.baseUrl}/api/v2/product/${encodeURIComponent(normalized)}.json?fields=${encodeURIComponent(fields)}`;
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (Platform.OS !== "web") headers["User-Agent"] = "AmyCalorieTracker/1.0 (https://amy.local)";
+  if (Platform.OS !== "web") headers["User-Agent"] = "AmyCalorieTracker/1.0 (https://openamy.app)";
 
   try {
     const response = await fetch(url, { headers });

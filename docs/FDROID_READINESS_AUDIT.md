@@ -1,127 +1,74 @@
-# Amy F-Droid Readiness Audit
+# Amy Catalog Readiness Audit
 
-Last updated: 2026-06-29
+Last updated: 2026-08-24
 
 ## Verdict
 
-Amy is not ready for official F-Droid main as-is.
+**Target catalog: [IzzyOnDroid](https://izzyondroid.org), not official f-droid.org.**
 
-The app is technically close to a broad Android public release: it is Android-first, local-first, has no ads or tracking SDKs in the current dependency audit, avoids Firebase and Play Services dependencies, and already has GitHub Releases plus Fastlane metadata.
+Amy is now licensed under **GPL-3.0-or-later**. Fastlane metadata includes title, short/full description, changelogs, phone screenshots, `icon.png`, and `featureGraphic.png`. Release Gradle/EAS is wired for per-ABI APKs and fail-closed release signing.
 
-The blocker is licensing. Amy is currently licensed under PolyForm Noncommercial License 1.0.0, which is source-available/non-commercial, not FLOSS. Official F-Droid main requires apps to be FLOSS and built from published source.
+Do **not** submit an `fdroiddata` recipe for official F-Droid main. Barcode scanning keeps `expo-camera` / Google ML Kit (proprietary native libraries such as `libbarhopper_v3.so`). That is compatible with the Izzy binary-repo path and incompatible with F-Droid main's no-proprietary-libs rule. Location (`expo-location`) is also kept.
 
-## Official F-Droid Sources Checked
-
-- [Submitting to F-Droid Quick Start Guide](https://f-droid.org/en/docs/Submitting_to_F-Droid_Quick_Start_Guide/)
-- [F-Droid Inclusion Policy](https://f-droid.org/en/docs/Inclusion_Policy/)
-- [F-Droid Anti-Features](https://f-droid.org/en/docs/Anti-Features/)
-- [F-Droid Build Metadata Reference](https://f-droid.org/en/docs/Build_Metadata_Reference/)
-- [All About Descriptions, Graphics, and Screenshots](https://f-droid.org/en/docs/All_About_Descriptions_Graphics_and_Screenshots/)
-
-## Readiness Matrix
+## IzzyOnDroid Matrix
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Public source | Pass | Source is public at `https://github.com/kausthubh-coder/amy`. |
-| FLOSS license | Blocked | Current license is PolyForm Noncommercial License 1.0.0. Official F-Droid main needs a recognized FLOSS license. |
-| Android package id | Pass | `com.kaust.amy` in `app.json`. |
-| Version metadata | Pass | Current source uses version `1.0.9` and Android `versionCode` `11`. |
-| Release tags | Pass | `v1.0.9` exists on origin after the current release. Keep every release tag aligned with source metadata. |
-| Source build recipe | Partial | `npm run prebuild:android` can generate native Android files; an `fdroiddata` recipe still needs to be tested. |
-| Generated native source | Intentional | `android/` is ignored and untracked. F-Droid should regenerate it during the build unless a maintainer chooses to commit generated native output. |
-| Signing | Needs release discipline | F-Droid signs official builds itself. GitHub Release APKs should use EAS signing or a release key, not the Android debug certificate. |
-| Fastlane metadata | Mostly pass | Title, summary, description, screenshots, and changelogs exist. Changelogs should stay under F-Droid's 500-character guidance. |
-| Ads/tracking | Pass in current audit | No Firebase, ads, billing, or tracking SDK dependency was found in current source inspection. |
-| Open Food Facts | Disclose | Used for barcode/product lookup. This is the only product nutrition database. |
-| OpenRouter | Anti-feature candidate | Optional BYO-key AI estimates use a proprietary network service and should be disclosed as a non-free network service candidate. |
-| Device speech recognition | Anti-feature candidate | Dictation depends on speech recognition services available on the device and may be Google-provided on many devices. App remains usable without dictation. |
-| Broad Android support | Good baseline | Expo/React Native generated Android currently targets modern SDKs and supports Android 7.0/API 24+ by default. Real install reports should still cover multiple OEMs and launchers. |
+| Public source | Pass | `https://github.com/kausthubh-coder/amy` |
+| FLOSS license | Pass | `GPL-3.0-or-later` in `LICENSE` and `package.json`. Third-party packages keep their original licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). |
+| Unique application id | Pass | `com.kaust.amy` |
+| Fastlane metadata | Pass | `fastlane/metadata/android/en-US/` has title, short/full description, changelogs, screenshots, `images/icon.png` (512×512), and `images/featureGraphic.png` (1024×500). |
+| Release signing | Ready, human key still required | Gradle/EAS use `MYAPP_UPLOAD_*` when present and **refuse** release package tasks if they are missing. v1.0.9 GitHub APK was debug-signed (`CN=Android Debug`) and must not be reused. |
+| `android:debuggable` / `testOnly` | Pass for release | Release `buildType` sets `debuggable false`. `testOnly` is not set. |
+| APK size | Estimated pass after ABI split | v1.0.9 universal APK is **98MB**. Native libs are ~80MB across four ABIs. Arm64-only is ~38MB uncompressed-libs, **~25MB** if native libs are stored compressed (`useLegacyPackaging`). Remaining bulk: Hermes (`libhermesvm.so` ~2.4MB), `libreactnative.so` ~6.5MB, ML Kit barcode (`libbarhopper_v3.so` ~4.7MB plus ~0.8MB models), dex ~10.7MB compressed, JS bundle ~2.9MB. Attach **arm64-v8a** to GitHub Releases. If a measured build exceeds ~30MB, request an Izzy exception with this breakdown. |
+| No first-launch phone-home | Pass | Manual logging is local. OpenRouter runs only with a user-supplied key. Open Food Facts runs on barcode lookup. Speech runs when the user taps dictation. |
+| Optional AI | Disclosed | OpenRouter is BYO-key. `webSearchEnabled` defaults true **only for those OpenRouter calls**, not at first launch. Fastlane full description discloses this. |
+| Official F-Droid main | Not pursued | Kept ML Kit / Play Services barcode stack. No `fdroiddata` recipe in this repo. |
 
-## Current App Shape
+## User-Facing Disclosures
 
-Amy is a good candidate for broad Android testing because:
+- Local-first diary, no account.
+- Open Food Facts for packaged-food barcode lookup (User-Agent contact `https://openamy.app`).
+- Optional OpenRouter cloud AI with a user-supplied key; not required for manual logging; may use OpenRouter web search when a key is present.
+- Dictation may use the device Google speech service.
+- Site: `https://openamy.app`.
 
-- Manual logging works without an account or API key.
-- Diary data, saved meals, goals, corrections, imports, exports, and weight logs stay in local app storage.
-- JSON exports intentionally omit the saved OpenRouter key.
-- Optional services are feature-specific rather than required for the whole app.
-- The dependency set is mostly Expo/React Native and permissively licensed at the direct dependency level.
-- Android permissions are explainable: camera for photos/barcodes, mic for dictation, location for optional rough context, and vibration for haptics.
+## Remaining Human Steps (not done in-repo)
 
-Compatibility still needs real-world reports for:
+1. Generate a release keystore **offline**. Do not commit it.
+2. Set `MYAPP_UPLOAD_STORE_FILE` / `STORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`.
+3. Build the signed arm64 APK (`npm run build:local:android:arm64` or EAS `production`).
+4. Measure the APK size; record SHA-256 and the release cert fingerprint.
+5. Tag a new GitHub Release (bump `versionName`/`versionCode` if shipping past v1.0.9) and attach `amy-<version>-arm64-v8a-release.apk`.
+6. File https://codeberg.org/IzzyOnDroid/repodata/issues (do not open that issue from this change set).
+7. Tell debug-signed v1.0.9 sideload users to export JSON and uninstall before switching keys.
 
-- OEM Android versions from Android 7 through current releases.
-- Launchers with different widget resize behavior.
-- Devices without Google speech recognition.
-- Small screens, large font sizes, and low-memory devices.
-- Offline behavior for manual logging, export, and import.
+## What Official F-Droid Main Would Still Block
 
-## Blockers Before Official F-Droid Main
+These stay on purpose for Izzy:
 
-1. Choose a FLOSS license if official F-Droid main is the goal.
-2. Confirm project assets can be distributed under that license.
-3. Confirm contributor licensing for prior and future contributions.
-4. Draft and test an `fdroiddata` build recipe from a clean checkout.
-5. Document anti-feature metadata for optional OpenRouter and speech recognition behavior.
-6. Keep Fastlane metadata and changelog files within F-Droid limits.
+- `expo-camera` barcode scanning via Google ML Kit / Play Services native binaries.
+- `expo-speech-recognition` may invoke a Google speech service at runtime.
+- Optional OpenRouter (non-free network service / Anti-Feature candidate) if F-Droid were ever reconsidered.
 
-Do not submit Amy to official F-Droid main while the project remains PolyForm Noncommercial.
+Do not strip those to fake F-Droid readiness.
 
-## Official Submission Path
+## Size Evidence (v1.0.9 GitHub APK)
 
-If Amy is relicensed for official F-Droid main, the practical path is:
+| Slice | Compressed size |
+| --- | ---: |
+| Universal APK | 98.0 MB |
+| `lib/x86` | 22.9 MB |
+| `lib/x86_64` | 22.1 MB |
+| `lib/armeabi-v7a` | 14.1 MB |
+| `lib/arm64-v8a` | 20.6 MB |
+| dex | 10.7 MB |
+| `assets/index.android.bundle` | 2.9 MB |
+| Estimated arm64-only, current packaging | 38.1 MB |
+| Estimated arm64-only + compressed `.so` | **24.8 MB** |
 
-1. Keep the release source public and tag each release commit, for example `v1.0.9` for version `1.0.9`.
-2. Keep upstream Fastlane metadata in `fastlane/metadata/android/en-US/`, including changelogs named by Android `versionCode`.
-3. Fork `fdroiddata` and add `metadata/com.kaust.amy.yml`.
-4. Describe the app metadata, source repository, issue tracker, FLOSS license, anti-features, build block, `AutoUpdateMode`, `UpdateCheckMode`, `CurrentVersion`, and `CurrentVersionCode`.
-5. Test metadata with `fdroid rewritemeta`, `fdroid lint`, `fdroid checkupdates --allow-dirty`, and `fdroid build`.
-6. Open a merge request to `fdroiddata` and answer reviewer questions.
+## Sources
 
-F-Droid builds from source and signs official builds itself. EAS or GitHub Release APKs can be useful release artifacts, but they are not a substitute for an accepted source-built `fdroiddata` recipe.
-
-## Practical `fdroiddata` Recipe Outline
-
-This is an outline, not a tested metadata file:
-
-```yaml
-Categories:
-  - Sports & Health
-License: <chosen FLOSS SPDX license>
-AuthorName: Amy maintainers
-SourceCode: https://github.com/kausthubh-coder/amy
-IssueTracker: https://github.com/kausthubh-coder/amy/issues
-
-RepoType: git
-Repo: https://github.com/kausthubh-coder/amy.git
-
-Builds:
-  - versionName: 1.0.9
-    versionCode: 11
-    commit: v1.0.9
-    sudo:
-      - apt-get update
-      - apt-get install -y nodejs npm
-    init:
-      - npm ci
-    build:
-      - npm run prebuild:android
-      - cd android && ./gradlew assembleRelease
-
-AutoUpdateMode: Version
-UpdateCheckMode: Tags
-CurrentVersion: 1.0.9
-CurrentVersionCode: 11
-```
-
-The real recipe will need exact F-Droid build-server toolchain decisions, dependency review, Gradle output path configuration, and any required scan ignores or anti-feature metadata.
-
-## Maintainer Decision Needed
-
-There are three honest paths:
-
-1. Keep PolyForm Noncommercial and use GitHub Releases plus source-available-friendly catalogs.
-2. Relicense Amy under a FLOSS license and pursue official F-Droid main.
-3. Keep the main app non-commercial and create a separate FLOSS edition only if code, assets, services, and contributor rights can be separated cleanly.
-
-Until that decision is made, public docs should describe Amy as source-available, not official F-Droid-ready.
+- [IzzyOnDroid App Inclusion Policy](https://izzyondroid.org/docs/general/AppInclusionPolicy/)
+- [IzzyOnDroid developer practices (per-ABI APKs)](https://izzyondroid.org/docs/devpractices/)
+- [F-Droid Inclusion Policy](https://f-droid.org/en/docs/Inclusion_Policy/) (not the current submission target)

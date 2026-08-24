@@ -2,7 +2,7 @@
   "name": "amy-calorie-tracker",
   "version": "1.0.9",
   "description": "Android-first calorie tracking built around fast line-by-line meal logging.",
-  "license": "PolyForm-Noncommercial-1.0.0",
+  "license": "GPL-3.0-or-later",
   "private": true,
   "main": "index.ts",
   "repository": {
@@ -12,7 +12,7 @@
   "bugs": {
     "url": "https://github.com/kausthubh-coder/amy/issues"
   },
-  "homepage": "https://github.com/kausthubh-coder/amy#readme",
+  "homepage": "https://openamy.app",
   "scripts": {
     "dev": "expo start --host lan",
     "start": "npm run dev",
@@ -23,9 +23,11 @@
     "audit:release": "npm test && npm run check:deps && npx expo-doctor",
     "prebuild:android": "expo prebuild --platform android --no-install",
     "build:local:android": "cd android && ./gradlew assembleRelease",
+    "build:local:android:arm64": "cd android && ./gradlew assembleArm64V8aRelease",
     "eas:login": "npx eas-cli@latest login",
     "build:dev:android": "npx eas-cli@latest build --profile development --platform android",
-    "build:preview:android": "npx eas-cli@latest build --profile preview --platform android --non-interactive --wait"
+    "build:preview:android": "npx eas-cli@latest build --profile preview --platform android --non-interactive --wait",
+    "build:production:android": "npx eas-cli@latest build --profile production --platform android --non-interactive --wait"
   },
   "dependencies": {
     "@expo/metro-runtime": "~56.0.16",

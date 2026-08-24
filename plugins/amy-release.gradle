@@ -1,0 +1,95 @@
+// Amy release signing, ABI splits, and IzzyOnDroid APK packaging.
+// Copied into the generated Android project during `expo prebuild`.
+// Never commit a keystore. Release package tasks fail closed if signing secrets are missing.
+
+def amyEnvOrProp(String name) {
+    def fromEnv = System.getenv(name)
+    if (fromEnv != null && !fromEnv.trim().isEmpty()) {
+        return fromEnv.trim()
+    }
+    def fromProp = project.findProperty(name)
+    if (fromProp != null && !fromProp.toString().trim().isEmpty()) {
+        return fromProp.toString().trim()
+    }
+    return null
+}
+
+def amyResolveStoreFile(String stored) {
+    if (stored == null) {
+        return null
+    }
+    def candidates = [
+        file(stored),
+        file("${rootProject.projectDir}/app/${stored}"),
+        file("${rootProject.projectDir}/${stored}"),
+        new File(stored)
+    ]
+    return candidates.find { it != null && it.exists() }
+}
+
+def amyStoreFilePath = amyEnvOrProp("MYAPP_UPLOAD_STORE_FILE")
+def amyStorePassword = amyEnvOrProp("MYAPP_UPLOAD_STORE_PASSWORD")
+def amyKeyAlias = amyEnvOrProp("MYAPP_UPLOAD_KEY_ALIAS")
+def amyKeyPassword = amyEnvOrProp("MYAPP_UPLOAD_KEY_PASSWORD")
+def amyStoreFile = amyResolveStoreFile(amyStoreFilePath)
+def amyReleaseSigningReady = (
+    amyStoreFile != null &&
+    amyStorePassword != null &&
+    amyKeyAlias != null &&
+    amyKeyPassword != null
+)
+
+android {
+    splits {
+        abi {
+            enable true
+            reset()
+            include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+            universalApk false
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (amyReleaseSigningReady) {
+                storeFile amyStoreFile
+                storePassword amyStorePassword
+                keyAlias amyKeyAlias
+                keyPassword amyKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            debuggable false
+            if (amyReleaseSigningReady) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    def needsReleaseSigning = graph.allTasks.any { task ->
+        def name = task.name.toLowerCase()
+        def isRelease = name.contains("release") && !name.contains("debug")
+        def isPackage = name.contains("assemble") || name.contains("bundle") || name.contains("package")
+        isRelease && isPackage
+    }
+    if (needsReleaseSigning && !amyReleaseSigningReady) {
+        throw new GradleException(
+            "Refusing to produce a release APK/AAB without a developer release key. " +
+            "Set MYAPP_UPLOAD_STORE_FILE, MYAPP_UPLOAD_STORE_PASSWORD, MYAPP_UPLOAD_KEY_ALIAS, " +
+            "and MYAPP_UPLOAD_KEY_PASSWORD (environment or gradle.properties) and point " +
+            "MYAPP_UPLOAD_STORE_FILE at a keystore file that exists. " +
+            "Debug signing is not allowed for release artifacts."
+        )
+    }
+}
