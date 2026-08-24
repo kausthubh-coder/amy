@@ -1,24 +1,8 @@
-const { createRunOncePlugin, withAppBuildGradle, withDangerousMod, withGradleProperties } = require("@expo/config-plugins");
+const { createRunOncePlugin, withAppBuildGradle, withDangerousMod } = require("@expo/config-plugins");
 const fs = require("fs");
 const path = require("path");
 
-function setGradleProperty(config, key, value) {
-  const existing = config.modResults.find((item) => item.type === "property" && item.key === key);
-  if (existing) {
-    existing.value = value;
-    return;
-  }
-  config.modResults.push({ type: "property", key, value });
-}
-
 function withAmyReleaseAndroid(config) {
-  config = withGradleProperties(config, (config) => {
-    // Compress native libs inside the APK so per-ABI release artifacts stay near Izzy's ~30MB guideline.
-    setGradleProperty(config, "expo.useLegacyPackaging", "true");
-    setGradleProperty(config, "android.bundle.enableUncompressedNativeLibs", "false");
-    return config;
-  });
-
   config = withDangerousMod(config, [
     "android",
     async (config) => {
@@ -37,4 +21,4 @@ function withAmyReleaseAndroid(config) {
   });
 }
 
-module.exports = createRunOncePlugin(withAmyReleaseAndroid, "with-amy-release-android", "1.0.0");
+module.exports = createRunOncePlugin(withAmyReleaseAndroid, "with-amy-release-android", "1.0.1");
