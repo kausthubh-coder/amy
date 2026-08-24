@@ -1,5 +1,6 @@
 export const integrationConfig = {
   openRouter: {
+    // Used only after the user supplies an OpenRouter key. Not a first-launch network call.
     webSearchEnabled: true,
     defaultModel: "google/gemini-3.1-flash-lite",
     defaultVisionModel: "google/gemini-3.1-flash-lite",

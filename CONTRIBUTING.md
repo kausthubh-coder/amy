@@ -88,28 +88,26 @@ For preview APK work, use EAS or a temp local prebuild. Generated APKs belong in
 npm run build:preview:android
 ```
 
-Release candidates follow [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md). Public APKs should be signed with a release key or by EAS, not with the Android debug certificate. Official F-Droid main builds, if Amy ever becomes eligible, must be built from source by F-Droid and signed by F-Droid.
+Release candidates follow [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md). Public APKs must be signed with the maintainer release key or EAS release credentials, not the Android debug certificate. The IzzyOnDroid artifact is the arm64-v8a APK attached to a GitHub Release. Do not add an official f-droid.org `fdroiddata` recipe unless a maintainer explicitly asks; barcode scanning keeps Google ML Kit.
 
-## Distribution and F-Droid Work
+## Distribution and IzzyOnDroid Work
 
-Amy is currently source-available under PolyForm Noncommercial License 1.0.0. That is not a FLOSS license, so do not submit Amy to the official F-Droid main repository as-is.
+Amy is licensed under GPL-3.0-or-later. The intended catalog is IzzyOnDroid, not official f-droid.org.
 
-Distribution contributions are welcome when they keep that status clear:
+Distribution contributions are welcome when they keep that path clear:
 
 - Improve GitHub Release notes, checksums, screenshots, Fastlane metadata, or Android catalog metadata.
 - Test source builds from a clean temp checkout.
-- Document catalog requirements and anti-feature disclosures.
-- Propose F-Droid-compatible changes without changing the license or commercial-use limits unless the maintainer has explicitly approved that legal direction.
+- Document catalog requirements, signing, ABI splits, and optional-network disclosures.
+- Do not strip `expo-camera` / ML Kit or `expo-location` to chase f-droid.org.
 
 The current audit lives in [docs/FDROID_READINESS_AUDIT.md](docs/FDROID_READINESS_AUDIT.md).
 
 ## Licensing
 
-By submitting a contribution, you agree that your contribution is provided under the same license as the project: PolyForm Noncommercial License 1.0.0.
+By submitting a contribution, you agree that your contribution is licensed under the GNU General Public License v3.0 or later, the same license as the project.
 
-Commercial use, commercial licensing, or relicensing requests should go to [kausthubh2007@gmail.com](mailto:kausthubh2007@gmail.com).
-
-If Amy later relicenses to a FLOSS license, maintainers may ask contributors to confirm that past and future contributions can be distributed under the new license.
+Third-party packages keep their original licenses; do not claim they are GPL.
 
 ## Contact
 

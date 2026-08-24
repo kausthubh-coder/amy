@@ -245,8 +245,8 @@ async function requestImageEstimate({
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": "https://amy.local",
-      "X-OpenRouter-Title": "Amy Local"
+      "HTTP-Referer": "https://openamy.app",
+      "X-OpenRouter-Title": "Amy"
     },
     body: JSON.stringify({
       model,
@@ -296,8 +296,8 @@ export async function estimateMealText(prompt: string, day: string, context?: Es
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://amy.local",
-        "X-OpenRouter-Title": "Amy Local"
+        "HTTP-Referer": "https://openamy.app",
+        "X-OpenRouter-Title": "Amy"
       },
       body: JSON.stringify({
         model: context?.openRouterModel?.trim() || integrationConfig.openRouter.defaultModel,

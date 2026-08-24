@@ -10,5 +10,8 @@ node_modules/
 *.aab
 *.log
 .env
+*.jks
+*.keystore
+keystore.properties
 .DS_Store
 amy-implementation-plan.html

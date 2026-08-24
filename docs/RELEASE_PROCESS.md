@@ -1,8 +1,8 @@
 # Amy Release Process
 
-Last updated: 2026-06-29
+Last updated: 2026-08-24
 
-This is the repeatable process for producing public Amy Android releases.
+This is the repeatable process for producing public Amy Android releases, including the **arm64-v8a** APK that IzzyOnDroid should consume.
 
 ## Release Metadata
 
@@ -17,6 +17,7 @@ Every release should keep these values aligned:
 | Fastlane changelog | `fastlane/metadata/android/en-US/changelogs/11.txt` | versionCode `11` |
 | Git tag | Git/GitHub | `v1.0.9` |
 | Release channel | GitHub Releases | `https://github.com/kausthubh-coder/amy/releases/latest` |
+| Izzy artifact | GitHub Release asset | `amy-<version>-arm64-v8a-release.apk` |
 
 For a new release:
 
@@ -28,6 +29,8 @@ For a new release:
 6. Update user-facing docs when install, privacy, permissions, services, or distribution status changes.
 7. Commit the source changes.
 8. Tag the release commit as `vX.Y.Z`.
+
+v1.0.9 was published as a **debug-signed** universal APK. The next public APK must use the maintainer release key and the arm64 split. Bump `versionName` / `versionCode` when that APK is tagged so catalog metadata stays aligned.
 
 ## Standard Verification
 
@@ -55,12 +58,42 @@ npm run prebuild:android
 
 Generated `android/` and `ios/` folders remain out of git unless a maintainer explicitly asks for them.
 
+## Release Keystore (do this once, offline)
+
+Never commit a keystore, `keystore.properties`, or signing passwords.
+
+Generate a dedicated **release** key (not the Android Debug cert `CN=Android Debug`):
+
+```sh
+keytool -genkeypair -v \
+  -keystore amy-release.keystore \
+  -alias amy \
+  -keyalg RSA \
+  -keysize 2048 \
+  -validity 10000
+```
+
+Keep `amy-release.keystore` offline (encrypted disk or password manager). Losing it means existing Izzy/GitHub users cannot update in place.
+
+Export these in the shell, EAS secrets, or a **non-committed** `~/.gradle/gradle.properties`:
+
+```sh
+export MYAPP_UPLOAD_STORE_FILE="/absolute/path/to/amy-release.keystore"
+export MYAPP_UPLOAD_STORE_PASSWORD="..."
+export MYAPP_UPLOAD_KEY_ALIAS="amy"
+export MYAPP_UPLOAD_KEY_PASSWORD="..."
+```
+
+If those values are absent, Gradle **refuses** `assembleRelease` / `bundleRelease` rather than silently signing with the debug certificate.
+
+Existing debug-signed sideload users must **uninstall** Amy before installing a release-signed build of `com.kaust.amy`. Ask them to export JSON from Settings first.
+
 ## Local APK Build
 
 Build local release candidates from a clean temp copy so generated native output and APKs stay out of the source tree:
 
 ```sh
-BUILD_DIR="$(mktemp -d /private/tmp/amy-v1.0.9-build.XXXXXX)"
+BUILD_DIR="$(mktemp -d /tmp/amy-build.XXXXXX)"
 rsync -a --delete \
   --exclude='.git' \
   --exclude='node_modules' \
@@ -75,49 +108,70 @@ rsync -a --delete \
 cd "$BUILD_DIR"
 npm ci
 npm run prebuild:android
-ANDROID_HOME="$HOME/Library/Android/sdk" \
-ANDROID_SDK_ROOT="$HOME/Library/Android/sdk" \
-npm run build:local:android
+# MYAPP_UPLOAD_* must already be set
+npm run build:local:android:arm64
 ```
 
-The default generated local Gradle release build may use debug signing unless release signing is configured. Do not publish debug-signed APKs as the official user-facing release.
+Release prebuild applies ABI splits. Outputs land under:
+
+```text
+android/app/build/outputs/apk/release/app-arm64-v8a-release.apk   ← attach this to GitHub Releases for Izzy
+android/app/build/outputs/apk/release/app-armeabi-v7a-release.apk
+android/app/build/outputs/apk/release/app-x86-release.apk
+android/app/build/outputs/apk/release/app-x86_64-release.apk
+```
+
+Rename the arm64 file before upload, for example `amy-1.0.10-arm64-v8a-release.apk`. Do not attach the universal/fat APK; v1.0.9 was ~98MB because it embedded every ABI.
+
+`npm run build:local:android` still builds every ABI split. Use `build:local:android:arm64` when you only need the Izzy artifact.
+
+Native libraries are stored compressed in the APK (`expo.useLegacyPackaging`) so the arm64 file stays near Izzy's ~30MB guideline. From the v1.0.9 universal APK, arm64-only + compressed `.so` files estimate at **about 25MB**. Hermes, the JS bundle, remaining native libs (including ML Kit barcode / `libbarhopper_v3.so`), and dex still make up that size.
 
 ## EAS APK Build
 
-For an EAS preview APK:
+Production EAS is configured to emit an **APK**, not only an AAB, and to pick the arm64 artifact:
 
 ```sh
-npm run build:preview:android
+npm run build:production:android
 ```
+
+That uses the `production` profile in `eas.json` (`buildType: apk`, `applicationArchivePath` matching `*arm64-v8a*.apk`). Store the same release keystore in EAS credentials or inject `MYAPP_UPLOAD_*` as EAS secrets. Preview builds use the same arm64 glob.
+
+`production-aab` remains available if an Android App Bundle is needed later. It is not the Izzy artifact.
 
 Before using EAS for public releases, confirm:
 
-- EAS remote Android versioning matches `app.json`.
-- The build profile outputs the intended APK or AAB type.
-- Signing credentials are correct for the release channel.
+- EAS remote Android versioning matches `app.json` (or bump Fastlane changelog to the remote `versionCode`).
+- The downloaded artifact is the arm64 APK, signed with the release key.
 - Release notes include the EAS build URL or artifact provenance.
 
 ## Artifact Verification
 
 After building, verify metadata and checksums before publishing.
 
-Common local checks:
-
 ```sh
-aapt2 dump badging builds/amy-1.0.9-release.apk
-apksigner verify --print-certs builds/amy-1.0.9-release.apk
-shasum -a 256 builds/amy-1.0.9-release.apk
+APK=builds/amy-1.0.9-arm64-v8a-release.apk
+aapt2 dump badging "$APK"
+apksigner verify --print-certs "$APK"
+shasum -a 256 "$APK"
 ```
+
+Confirm:
+
+- Package id `com.kaust.amy`.
+- `native-code: 'arm64-v8a'` only.
+- Signer is **not** `CN=Android Debug`.
+- `application-debuggable` is absent.
+- Size is recorded honestly (Izzy guideline ~30MB per app; request an exception if the arm64 APK is larger).
 
 Record in the release notes:
 
-- APK filename.
-- Package id.
-- Version name.
-- Version code.
+- APK filename (`amy-<version>-arm64-v8a-release.apk`).
+- Package id, version name, version code.
+- ABI (`arm64-v8a`).
 - Minimum SDK and target SDK when available.
 - SHA-256 checksum.
-- Signing certificate summary or EAS signing provenance.
+- Signing certificate summary (release key fingerprint, not debug).
 - Known limitations or compatibility notes.
 
 ## GitHub Release Checklist
@@ -125,24 +179,23 @@ Record in the release notes:
 1. Confirm the release commit is on `main`.
 2. Confirm `git status --short` is clean except intentionally ignored local artifacts.
 3. Create or update tag `vX.Y.Z`.
-4. Build and verify the APK/AAB.
+4. Build and verify the **signed arm64** APK.
 5. Draft GitHub Release notes from the Fastlane changelog plus compatibility notes.
-6. Upload the APK/AAB.
-7. Add SHA-256 checksum to the release body.
-8. Smoke test install or upgrade on an emulator or physical Android device.
+6. Upload `amy-<version>-arm64-v8a-release.apk` (this is the IzzyOnDroid artifact).
+7. Add SHA-256 checksum and signing fingerprint to the release body.
+8. Smoke test install or upgrade on an emulator or physical Android device. Debug-signed v1.0.9 users must uninstall first.
 9. Confirm `https://github.com/kausthubh-coder/amy/releases/latest` points to the expected release.
 
-## F-Droid Builds
+## IzzyOnDroid
 
-Official F-Droid main does not use the GitHub Release APK. F-Droid builds from source and signs the APK itself.
+IzzyOnDroid consumes the GitHub Release APK; it does not rebuild from source the way official F-Droid main does.
 
-Amy is blocked from official F-Droid main while it remains PolyForm Noncommercial. If Amy is relicensed under a FLOSS license, the F-Droid flow should be:
+After the signed arm64 APK is on a tagged GitHub Release, a maintainer can file:
 
-1. Keep the release commit tagged.
-2. Keep Fastlane metadata in the repo.
-3. Submit an `fdroiddata` merge request referencing the source repo and tag.
-4. Use a build recipe that runs `npm ci`, `npm run prebuild:android`, and Gradle from generated source.
-5. Include anti-feature metadata for optional non-free network services if needed.
-6. Let F-Droid build and sign the APK.
+https://codeberg.org/IzzyOnDroid/repodata/issues
 
-Read [FDROID_READINESS_AUDIT.md](FDROID_READINESS_AUDIT.md) before attempting this.
+Do not file that issue from this repo change set. Include Fastlane metadata (`fastlane/metadata/android/en-US/`), license `GPL-3.0-or-later`, package `com.kaust.amy`, and the arm64 APK URL.
+
+Official f-droid.org is **not** the current target. Barcode scanning keeps `expo-camera` / ML Kit (proprietary native bits). Do not add an `fdroiddata` recipe unless that policy is explicitly reversed.
+
+Read [FDROID_READINESS_AUDIT.md](FDROID_READINESS_AUDIT.md) for the catalog matrix.

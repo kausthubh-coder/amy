@@ -1,6 +1,6 @@
 # Amy
 
-Amy is a source-available Android calorie tracker where logging feels like writing a note.
+Amy is an open-source Android calorie tracker where logging feels like writing a note.
 
 Type one food per line, press Enter, and Amy turns the line into editable calories and macros. Use saved meals for repeat foods, scan packaged foods through Open Food Facts, and optionally estimate food photos or nutrition labels with your own OpenRouter key.
 
@@ -14,7 +14,7 @@ Amy is early, Android-first, and looking for testers who care about fast logging
     <img alt="Report an issue" src="https://img.shields.io/badge/Report%20Issue-GitHub-3b82f6?style=for-the-badge&logo=github" />
   </a>
   <a href="LICENSE">
-    <img alt="License: PolyForm Noncommercial 1.0.0" src="https://img.shields.io/badge/License-Source--Available%20Noncommercial-f97316?style=for-the-badge" />
+    <img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/License-GPL--3.0--or--later-4c1?style=for-the-badge" />
   </a>
 </p>
 
@@ -39,12 +39,12 @@ Amy is a good fit if you want:
 
 - A fast Android food log that feels closer to notes than a spreadsheet.
 - Local-first diary storage with JSON export/import.
-- No account, ads, tracking SDKs, Firebase, or Play Services dependency.
-- Barcode lookup through Open Food Facts.
+- No account, ads, or tracking SDKs.
+- Barcode lookup through Open Food Facts (Android camera uses Google ML Kit).
 - Optional AI estimates where you bring your own OpenRouter key.
 - A small app that is still actively changing based on tester feedback.
 
-It is not a good fit yet if you need a polished commercial diet platform, verified medical nutrition advice, a giant proprietary food database, iOS support, or official F-Droid installation today.
+It is not a good fit yet if you need a polished commercial diet platform, verified medical nutrition advice, a giant proprietary food database, iOS support, or installation from official f-droid.org. IzzyOnDroid is the intended F-Droid-compatible catalog.
 
 ## Current Status
 
@@ -57,8 +57,9 @@ It is not a good fit yet if you need a polished commercial diet platform, verifi
 | Data model | Local app storage with JSON export/import |
 | Product database | Open Food Facts only |
 | AI estimates | Optional, user-supplied OpenRouter key |
-| License | PolyForm Noncommercial 1.0.0 |
-| Official F-Droid main | Blocked until relicensed under a FLOSS license |
+| License | GPL-3.0-or-later |
+| IzzyOnDroid | Ready to request after a signed arm64 GitHub Release APK |
+| Official f-droid.org | Not the current target (keeps ML Kit barcode) |
 
 ## Install
 
@@ -85,7 +86,7 @@ If install fails, please open an [install compatibility report](https://github.c
 | Saved meals | Stats and streaks | OpenRouter key stored locally |
 | Food photo estimates | Weight logs | No account required |
 | Nutrition label estimates | Android widgets | No ads or tracking SDKs |
-| Barcode scan with Open Food Facts | Previous/next day swipe | No Firebase or Play Services dependency |
+| Barcode scan with Open Food Facts | Previous/next day swipe | No Firebase |
 
 Manual logging works without an account, subscription, or API key. Network services are only used when you choose a feature that needs one.
 
@@ -113,21 +114,20 @@ Amy is not trying to clone MyFitnessPal, Cronometer, Lose It, Food You, Waistlin
 
 The core bet is different: make the first action as simple as writing a line of text, then attach structure after the fact. Existing open nutrition apps often focus on full databases, meal categories, micronutrients, recipes, or self-hosting. Amy focuses first on the daily note-like logging loop.
 
-## Distribution And F-Droid
+## Distribution And IzzyOnDroid
 
-Amy is source-available today, not FLOSS. The current license is [PolyForm Noncommercial License 1.0.0](LICENSE), which allows non-commercial use, copying, modification, and sharing, but blocks commercial redistribution without permission.
+Amy is free software under the [GNU GPL v3.0 or later](LICENSE).
 
-That means:
+Current install channel:
 
-- GitHub Releases are the official install channel today.
-- Official F-Droid main is not available under the current license.
-- A separate source-available Android catalog may be possible if that catalog accepts non-commercial licenses.
-- Official F-Droid main would require relicensing Amy under a recognized FLOSS license, confirming asset rights, testing an `fdroiddata` recipe, and disclosing anti-features for optional non-free network services.
+- GitHub Releases are the official APK download: [latest release](https://github.com/kausthubh-coder/amy/releases/latest).
+- The IzzyOnDroid artifact is the **arm64-v8a** release-signed APK, not the old universal debug-signed APK.
+- Official f-droid.org is not being pursued while barcode scanning keeps Google ML Kit.
 
 Read:
 
-- [F-Droid readiness audit](docs/FDROID_READINESS_AUDIT.md)
-- [Source-available distribution plan](docs/SOURCE_AVAILABLE_DISTRIBUTION_PLAN.md)
+- [Catalog readiness audit](docs/FDROID_READINESS_AUDIT.md)
+- [Distribution plan](docs/SOURCE_AVAILABLE_DISTRIBUTION_PLAN.md)
 - [Community outreach plan](docs/COMMUNITY_OUTREACH.md)
 - [Release process](docs/RELEASE_PROCESS.md)
 
@@ -139,6 +139,7 @@ Amy is built around local-first logging:
 - OpenRouter is optional and only used when you add your own key in Settings.
 - Open Food Facts is used for packaged-food barcode lookup.
 - Optional rough location context can help restaurant estimates and can be turned off.
+- Dictation may use the Google speech service on the device.
 - JSON exports intentionally remove the saved OpenRouter key.
 
 Read [PRIVACY.md](PRIVACY.md) for the full data, permission, and network-service disclosure.
@@ -175,10 +176,8 @@ Useful starting points:
 
 ## License
 
-Amy is released under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+Amy is released under the [GNU General Public License v3.0 or later](LICENSE).
 
-You can use, copy, modify, and share the code for non-commercial purposes. Commercial use, selling the app/code, paid hosted versions, paid forks, or monetized redistribution requires written permission.
+Third-party dependency, service, and asset notices live in [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md). Google ML Kit native barcode libraries pulled in by `expo-camera` are **not** GPL'd; they keep Google's terms.
 
-Third-party dependency, service, and asset notices live in [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md).
-
-Commercial licensing, relicensing, or distribution permission requests: [kausthubh2007@gmail.com](mailto:kausthubh2007@gmail.com)
+Questions: [kausthubh2007@gmail.com](mailto:kausthubh2007@gmail.com)

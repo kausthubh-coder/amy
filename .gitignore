@@ -13,4 +13,7 @@ android-*.png
 *.aab
 .env
 *.log
+*.jks
+*.keystore
+keystore.properties
 amy-implementation-plan.html

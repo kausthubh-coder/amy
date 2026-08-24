@@ -1,8 +1,8 @@
 # Amy Privacy Notes
 
-Last updated: 2026-06-24
+Last updated: 2026-08-24
 
-Amy is designed as a local-first Android calorie tracker. It does not require an account, subscription, analytics SDK, Firebase project, advertising SDK, or Google Play Services integration.
+Amy is designed as a local-first Android calorie tracker. It does not require an account, subscription, analytics SDK, Firebase project, or advertising SDK.
 
 ## Data Stored On Device
 
@@ -20,10 +20,11 @@ JSON exports remove the saved OpenRouter key and remembered Android export folde
 
 ## Network Services
 
-Amy uses network requests only for features you choose to use:
+Amy uses network requests only for features you choose to use. It does not call cloud AI on first launch.
 
 - Open Food Facts is used for barcode/product lookup.
-- OpenRouter is used for AI meal, photo, label, and dictation estimates only after you enter your own key.
+- OpenRouter is used for AI meal, photo, label, and dictation estimates only after you enter your own key. Those optional requests may include OpenRouter web search.
+- Manual logging works with no API key.
 
 When OpenRouter estimates are used, Amy sends the meal text, selected/captured image data for photo or label estimates, and optional context needed for the estimate. If rough location context is enabled, Amy may send a city/region/country label to OpenRouter as part of the estimate prompt.
 
@@ -31,7 +32,7 @@ When OpenRouter estimates are used, Amy sends the meal text, selected/captured i
 
 Amy may request:
 
-- Camera, for barcode scanning and food/label photos.
+- Camera, for barcode scanning and food/label photos. On Android, barcode detection uses Google ML Kit libraries shipped in the APK.
 - Microphone and speech recognition, for dictation.
 - Photos/gallery access, when choosing a food or label image.
 - Location, only when optional restaurant context is enabled.
