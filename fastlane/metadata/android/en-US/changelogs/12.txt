@@ -1,0 +1,3 @@
+Amy 1.0.10 is the first GPL-3.0-or-later, release-signed arm64 APK for IzzyOnDroid.
+
+If you installed debug-signed 1.0.9, export diary JSON from Settings and uninstall first; the new signing key cannot update that install in place.

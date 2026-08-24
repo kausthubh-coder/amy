@@ -51,7 +51,7 @@ It is not a good fit yet if you need a polished commercial diet platform, verifi
 | Area | Status |
 | --- | --- |
 | Android APK | Available from GitHub Releases |
-| Current version | `1.0.9` |
+| Current version | `1.0.10` |
 | Android package | `com.kaust.amy` |
 | Minimum Android version | Android 7.0 / API 24 |
 | Data model | Local app storage with JSON export/import |
@@ -68,6 +68,8 @@ Download the latest APK from GitHub Releases:
 [Download Amy for Android](https://github.com/kausthubh-coder/amy/releases/latest)
 
 Android may ask you to allow APK installs from your browser or file manager. Export your data from Settings before switching between unofficial builds.
+
+1.0.10 is the first **release-signed arm64** APK. If you installed debug-signed 1.0.9, export diary JSON from Settings and uninstall before installing 1.0.10.
 
 If install fails, please open an [install compatibility report](https://github.com/kausthubh-coder/amy/issues/new?template=install_compatibility.yml) with your device model, Android version, APK version, and what happened.
 
