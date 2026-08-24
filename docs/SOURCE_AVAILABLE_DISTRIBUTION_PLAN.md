@@ -18,8 +18,8 @@ Amy already has:
 - Site: `https://openamy.app`
 - GitHub Releases download page: `https://github.com/kausthubh-coder/amy/releases/latest`
 - Android package: `com.kaust.amy`
-- Current source version: `1.0.9`
-- Current Android `versionCode`: `11`
+- Current source version: `1.0.10`
+- Current Android `versionCode`: `12`
 - Fastlane metadata in `fastlane/metadata/android/en-US/` including icon and feature graphic
 - Screenshots in `docs/screenshots/` and Fastlane phone screenshots
 - README, CONTRIBUTING, SECURITY.md, privacy notes, distribution notes, release process, third-party notices, and GPL-3.0-or-later

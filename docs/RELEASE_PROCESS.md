@@ -10,12 +10,12 @@ Every release should keep these values aligned:
 
 | Surface | File or location | Current value |
 | --- | --- | --- |
-| App version | `package.json` | `1.0.9` |
-| Expo version | `app.json` | `1.0.9` |
-| Android `versionCode` | `app.json` | `11` |
+| App version | `package.json` | `1.0.10` |
+| Expo version | `app.json` | `1.0.10` |
+| Android `versionCode` | `app.json` | `12` |
 | Android package | `app.json` | `com.kaust.amy` |
-| Fastlane changelog | `fastlane/metadata/android/en-US/changelogs/11.txt` | versionCode `11` |
-| Git tag | Git/GitHub | `v1.0.9` |
+| Fastlane changelog | `fastlane/metadata/android/en-US/changelogs/12.txt` | versionCode `12` |
+| Git tag | Git/GitHub | `v1.0.10` |
 | Release channel | GitHub Releases | `https://github.com/kausthubh-coder/amy/releases/latest` |
 | Izzy artifact | GitHub Release asset | `amy-<version>-arm64-v8a-release.apk` |
 
@@ -30,7 +30,7 @@ For a new release:
 7. Commit the source changes.
 8. Tag the release commit as `vX.Y.Z`.
 
-v1.0.9 was published as a **debug-signed** universal APK. The next public APK must use the maintainer release key and the arm64 split. Bump `versionName` / `versionCode` when that APK is tagged so catalog metadata stays aligned.
+v1.0.9 was published as a **debug-signed** universal APK. **1.0.10** is the first public APK that uses the maintainer release key and the arm64 split. Keep `versionName` / `versionCode` aligned with that tagged APK so catalog metadata stays accurate.
 
 ## Standard Verification
 
@@ -150,7 +150,7 @@ Before using EAS for public releases, confirm:
 After building, verify metadata and checksums before publishing.
 
 ```sh
-APK=builds/amy-1.0.9-arm64-v8a-release.apk
+APK=builds/amy-1.0.10-arm64-v8a-release.apk
 aapt2 dump badging "$APK"
 apksigner verify --print-certs "$APK"
 shasum -a 256 "$APK"
