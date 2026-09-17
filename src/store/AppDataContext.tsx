@@ -1,40 +1,57 @@
-import React, { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { AppState } from "react-native";
 
+import { normalizeMealLine } from "../domain/lines";
 import { createId } from "../domain/seed";
 import { targetsFromCalories } from "../domain/nutrition";
-import { AmyLocalData, AppSettings, FoodDraft, FoodEntry, GoalProfile, SavedMeal, WeightLog } from "../domain/types";
+import { AmyLocalData, AppSettings, FoodCorrection, FoodDraft, FoodEntry, GoalProfile, SavedMeal, WeightLog } from "../domain/types";
 import { addDays, toDateKey } from "../utils/date";
-import { loadLocalData, parseImportText, saveLocalData, serializeExport } from "../storage/localDataStore";
+import { loadLocalData, onSaveResult, parseImportText, quarantineAndReset, saveLocalData, serializeExport } from "../storage/localDataStore";
 import { syncAndroidWidgets } from "../services/androidWidgetSync";
+
+const MAX_CORRECTIONS = 400;
 
 type AddEntryOptions = {
   allowDuplicateNoteLine?: boolean;
+  // Typed lines already exist in the note; capture flows need the line appended.
+  appendNoteLine?: boolean;
 };
+
+export type ImportSummary = { entries: number; savedMeals: number; weightLogs: number; dropped: number };
 
 type AppDataContextValue = {
   data: AmyLocalData | null;
   ready: boolean;
+  loadError: string | null;
+  saveError: string | null;
+  today: string;
   selectedDay: string;
   setSelectedDay: (day: string) => void;
   shiftDay: (days: number) => void;
+  goToToday: () => void;
+  retryLoad: () => void;
+  startFresh: () => Promise<void>;
   updateDayNote: (day: string, text: string) => void;
-  appendDayNoteLine: (day: string, text: string) => void;
-  completeOnboarding: (goal: Partial<GoalProfile>) => void;
+  completeOnboarding: (goal: Partial<GoalProfile>, settings?: Partial<AppSettings>) => void;
   updateGoal: (goal: Partial<GoalProfile>) => void;
   updateSettings: (settings: Partial<AppSettings>) => void;
-  addDrafts: (drafts: FoodDraft[]) => void;
   addEntryFromDraft: (draft: FoodDraft, rawInput?: string, options?: AddEntryOptions) => FoodEntry;
-  confirmDraft: (draftId: string) => void;
-  updateDraft: (draftId: string, patch: Partial<FoodDraft>) => void;
   updateEntry: (entryId: string, patch: Partial<FoodEntry>) => void;
   deleteEntry: (entryId: string) => void;
+  restoreEntry: (entry: FoodEntry, noteText?: string) => void;
+  rememberFood: (line: string, food: Pick<FoodEntry, "title" | "servingLabel" | "macros" | "portion" | "items">) => void;
+  forgetFood: (line: string) => void;
   logWeight: (day: string, weightLbs: number, note?: string) => void;
   addSavedMeal: (meal: Omit<SavedMeal, "id" | "createdAt">) => void;
+  deleteSavedMeal: (mealId: string) => void;
+  restoreSavedMeal: (meal: SavedMeal) => void;
   logSavedMeal: (mealId: string, day: string) => void;
   exportText: () => string;
-  importText: (text: string) => void;
-  resetDemo: () => void;
+  previewImport: (text: string) => ImportSummary;
+  importText: (text: string) => ImportSummary;
 };
+
+type AppActions = Omit<AppDataContextValue, "data" | "ready" | "loadError" | "saveError" | "today" | "selectedDay">;
 
 const AppDataContext = createContext<AppDataContextValue | null>(null);
 
@@ -56,68 +73,30 @@ function weightLogForDay(day: string, weightLbs: number, note?: string): WeightL
 
 function updateDayNotes(notes: AmyLocalData["dayNotes"], day: string, text: string) {
   const existing = notes.find((note) => note.day === day);
+  if (existing?.text === text) return notes;
   return existing
     ? notes.map((note) => (note.day === day ? { ...note, text, updatedAt: nowIso() } : note))
     : [...notes, { day, text, updatedAt: nowIso() }];
 }
 
 function appendNoteLine(notes: AmyLocalData["dayNotes"], day: string, rawLine: string, options: { allowDuplicate?: boolean } = {}) {
-  const line = rawLine.trim();
+  const line = rawLine.replace(/[\r\n]+/g, " ").trim();
   if (!line) return notes;
   const existing = notes.find((note) => note.day === day);
-  const currentText = existing?.text ?? "";
-  const lines = currentText
+  const lines = (existing?.text ?? "")
     .split(/\r?\n/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-  if (!options.allowDuplicate && lines.some((item) => item.toLowerCase() === line.toLowerCase())) return notes;
+    .map((item) => item.trimEnd())
+    .filter((item) => item.trim());
+  if (!options.allowDuplicate && lines.some((item) => item.trim().toLowerCase() === line.toLowerCase())) return notes;
   return updateDayNotes(notes, day, [...lines, line].join("\n"));
 }
 
-function draftKey(draft: FoodDraft) {
-  return [
-    draft.day,
-    draft.rawInput.trim().toLowerCase().replace(/\s+/g, " "),
-    draft.title.trim().toLowerCase().replace(/\s+/g, " "),
-    draft.servingLabel.trim().toLowerCase().replace(/\s+/g, " "),
-    draft.macros.calories,
-    Math.round(draft.macros.carbs),
-    Math.round(draft.macros.protein),
-    Math.round(draft.macros.fat),
-    draft.portion?.unit ?? "",
-    draft.portion?.amount ?? ""
-  ].join("|");
-}
-
-function cleanSourceLabel(source: FoodDraft["source"], label?: string) {
-  let sourceLabel = label;
-  if (source !== "open_food_facts" && /open food facts/i.test(sourceLabel ?? "")) {
-    sourceLabel = source === "label_ocr" ? "Label estimate" : "Amy estimate";
-  } else if (source === "ai_text") {
-    sourceLabel = /menu|restaurant|chick-fil-a|mcdonald|taco bell|starbucks|chipotle/i.test(sourceLabel ?? "")
-      ? "Restaurant estimate"
-      : "Amy estimate";
-  } else if (/usda|fatsecret|myfitnesspal|cronometer|nutritionix|common nutrition database|openrouter key|local estimate|local fallback/i.test(sourceLabel ?? "")) {
-    sourceLabel = "Amy estimate";
-  }
-  return sourceLabel;
-}
-
-function normalizeDraft(draft: FoodDraft): FoodDraft {
-  const sourceLabel = cleanSourceLabel(draft.source, draft.sourceLabel);
-  return sourceLabel === draft.sourceLabel ? draft : { ...draft, sourceLabel };
-}
-
-function normalizeEntry(entry: FoodEntry): FoodEntry {
-  const sourceLabel = cleanSourceLabel(entry.source, entry.sourceLabel);
-  return sourceLabel === entry.sourceLabel ? entry : { ...entry, sourceLabel };
-}
-
 function entryFromDraft(draft: FoodDraft, rawInput = draft.rawInput): FoodEntry {
-  return normalizeEntry({
+  const timestamp = nowIso();
+  return {
     id: createId("entry"),
     day: draft.day,
-    rawInput,
+    rawInput: rawInput.replace(/[\r\n]+/g, " ").trim(),
     title: draft.title,
     servingLabel: draft.servingLabel,
     macros: draft.macros,
@@ -127,175 +106,222 @@ function entryFromDraft(draft: FoodDraft, rawInput = draft.rawInput): FoodEntry 
     portion: draft.portion,
     barcode: draft.barcode,
     imageUri: draft.imageUri,
-    createdAt: nowIso(),
-    updatedAt: nowIso()
-  });
+    items: draft.items,
+    assumptions: draft.assumptions,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
 }
 
-function dedupeDrafts(drafts: FoodDraft[]) {
-  const seen = new Set<string>();
-  return drafts.map(normalizeDraft).filter((draft) => {
-    const key = draftKey(draft);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+function upsertCorrection(list: FoodCorrection[], correction: FoodCorrection): FoodCorrection[] {
+  const existing = list.find((item) => item.key === correction.key);
+  const next = [{ ...correction, uses: (existing?.uses ?? 0) + 1 }, ...list.filter((item) => item.key !== correction.key)];
+  return next.length > MAX_CORRECTIONS ? next.slice(0, MAX_CORRECTIONS) : next;
 }
 
-function normalizeLocalData(loaded: AmyLocalData) {
-  const drafts = dedupeDrafts(loaded.drafts);
-  const entries = loaded.entries.map(normalizeEntry);
-  const unchanged =
-    drafts.length === loaded.drafts.length &&
-    drafts.every((draft, index) => draft === loaded.drafts[index]) &&
-    entries.every((entry, index) => entry === loaded.entries[index]);
-  return unchanged ? loaded : { ...loaded, drafts, entries, updatedAt: nowIso() };
+function summarize(data: AmyLocalData, dropped: number): ImportSummary {
+  return { entries: data.entries.length, savedMeals: data.savedMeals.length, weightLogs: data.weightLogs.length, dropped };
 }
 
 export function LocalDataProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<AmyLocalData | null>(null);
   const [ready, setReady] = useState(false);
-  const [selectedDay, setSelectedDay] = useState(toDateKey(new Date()));
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [today, setToday] = useState(() => toDateKey(new Date()));
+  const [selectedDay, setSelectedDay] = useState(today);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const dataRef = useRef<AmyLocalData | null>(null);
+  const todayRef = useRef(today);
 
   useEffect(() => {
     let mounted = true;
-    loadLocalData().then((loaded) => {
-      if (!mounted) return;
-      const normalized = normalizeLocalData(loaded);
-      setData(normalized);
-      if (normalized !== loaded) void saveLocalData(normalized);
-      setReady(true);
-    });
+    setLoadError(null);
+    loadLocalData()
+      .then((loaded) => {
+        if (!mounted) return;
+        dataRef.current = loaded;
+        setData(loaded);
+        setReady(true);
+      })
+      .catch((error: unknown) => {
+        if (!mounted) return;
+        setLoadError(error instanceof Error ? error.message : "Amy could not read its saved data.");
+        setReady(true);
+      });
     return () => {
       mounted = false;
+    };
+  }, [loadAttempt]);
+
+  useEffect(
+    () =>
+      onSaveResult((error) => {
+        setSaveError(error ? "Amy could not save your last change. Free up storage, then edit anything to retry." : null);
+      }),
+    []
+  );
+
+  // Day rollover: an app left open past midnight must not keep logging to yesterday.
+  useEffect(() => {
+    const syncToday = () => {
+      const next = toDateKey(new Date());
+      if (next === todayRef.current) return;
+      const previous = todayRef.current;
+      todayRef.current = next;
+      setToday(next);
+      setSelectedDay((day) => (day === previous ? next : day));
+    };
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") syncToday();
+    });
+    const timer = setInterval(syncToday, 30000);
+    return () => {
+      subscription.remove();
+      clearInterval(timer);
     };
   }, []);
 
   useEffect(() => {
     if (!data) return;
     void syncAndroidWidgets(data);
-  }, [data]);
+  }, [data, today]);
 
-  const commit = (updater: (current: AmyLocalData) => AmyLocalData) => {
-    setData((current) => {
-      if (!current) return current;
-      const next = updater(current);
-      void saveLocalData(next);
-      return next;
-    });
-  };
+  const commit = useCallback((updater: (current: AmyLocalData) => AmyLocalData) => {
+    const current = dataRef.current;
+    if (!current) return;
+    const next = updater(current);
+    if (next === current) return;
+    dataRef.current = next;
+    setData(next);
+    void saveLocalData(next);
+  }, []);
 
-  const value = useMemo<AppDataContextValue>(
+  // Actions only depend on `commit`, so their identities stay stable across data changes.
+  const actions = useMemo<AppActions>(
     () => ({
-      data,
-      ready,
-      selectedDay,
       setSelectedDay,
-      shiftDay: (days) => setSelectedDay((day) => addDays(day, days)),
+      shiftDay: (days: number) => setSelectedDay((day) => addDays(day, days)),
+      goToToday: () => setSelectedDay(toDateKey(new Date())),
+      retryLoad: () => {
+        setReady(false);
+        setLoadAttempt((attempt) => attempt + 1);
+      },
+      startFresh: async () => {
+        const fresh = await quarantineAndReset();
+        dataRef.current = fresh;
+        setData(fresh);
+        setLoadError(null);
+      },
       updateDayNote: (day, text) =>
         commit((current) => {
-          return { ...current, dayNotes: updateDayNotes(current.dayNotes, day, text), updatedAt: nowIso() };
+          const dayNotes = updateDayNotes(current.dayNotes, day, text);
+          return dayNotes === current.dayNotes ? current : { ...current, dayNotes, updatedAt: nowIso() };
         }),
-      appendDayNoteLine: (day, text) =>
-        commit((current) => {
-          return { ...current, dayNotes: appendNoteLine(current.dayNotes, day, text), updatedAt: nowIso() };
-        }),
-      completeOnboarding: (goal) =>
+      completeOnboarding: (goal, settings) =>
         commit((current) => {
           const dailyCalories = goal.dailyCalories ?? current.goal.dailyCalories;
           const currentWeightLbs = goal.currentWeightLbs ?? current.goal.currentWeightLbs;
           return {
             ...current,
             goal: { ...current.goal, ...targetsFromCalories(dailyCalories), ...goal, dailyCalories, currentWeightLbs },
-            settings: { ...current.settings, onboardingDone: true },
+            settings: { ...current.settings, ...settings, onboardingDone: true },
             weightLogs:
-              current.weightLogs.length === 1 && current.weightLogs[0]?.id === "weight_initial"
-                ? [{ ...current.weightLogs[0], day: selectedDay, weightLbs: currentWeightLbs, updatedAt: nowIso() }]
-                : current.weightLogs.length > 0
-                  ? current.weightLogs
-                  : [weightLogForDay(selectedDay, currentWeightLbs, "Starting weight")],
+              current.weightLogs.length > 0 || currentWeightLbs <= 0
+                ? current.weightLogs
+                : [weightLogForDay(toDateKey(new Date()), currentWeightLbs, "Starting weight")],
             updatedAt: nowIso()
           };
         }),
-      updateGoal: (goal) =>
-        commit((current) => {
-          const dailyCalories = goal.dailyCalories ?? current.goal.dailyCalories;
-          return { ...current, goal: { ...current.goal, ...goal, dailyCalories }, updatedAt: nowIso() };
-        }),
+      updateGoal: (goal) => commit((current) => ({ ...current, goal: { ...current.goal, ...goal }, updatedAt: nowIso() })),
       updateSettings: (settings) =>
         commit((current) => ({ ...current, settings: { ...current.settings, ...settings }, updatedAt: nowIso() })),
-      addDrafts: (drafts) =>
-        commit((current) => {
-          const currentDrafts = dedupeDrafts(current.drafts);
-          const seen = new Set(currentDrafts.map(draftKey));
-          const fresh = drafts.map(normalizeDraft).filter((draft) => {
-            const key = draftKey(draft);
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          });
-          if (!fresh.length && currentDrafts.length === current.drafts.length) return current;
-          return { ...current, drafts: [...fresh, ...currentDrafts], updatedAt: nowIso() };
-        }),
-      updateDraft: (draftId, patch) =>
-        commit((current) => ({
-          ...current,
-          drafts: current.drafts.map((draft) => (draft.id === draftId ? { ...draft, ...patch } : draft)),
-          updatedAt: nowIso()
-        })),
       addEntryFromDraft: (draft, rawInput, options) => {
         const entry = entryFromDraft(draft, rawInput);
         commit((current) => ({
           ...current,
           entries: [entry, ...current.entries],
-          drafts: current.drafts.filter((item) => item.id !== draft.id),
-          dayNotes: appendNoteLine(current.dayNotes, entry.day, entry.rawInput ?? entry.title, {
-            allowDuplicate: options?.allowDuplicateNoteLine
-          }),
+          dayNotes:
+            options?.appendNoteLine === false
+              ? current.dayNotes
+              : appendNoteLine(current.dayNotes, entry.day, entry.rawInput ?? entry.title, { allowDuplicate: options?.allowDuplicateNoteLine }),
           updatedAt: nowIso()
         }));
         return entry;
       },
-      confirmDraft: (draftId) =>
-        commit((current) => {
-          const draft = current.drafts.find((item) => item.id === draftId);
-          if (!draft) return current;
-          const entry = entryFromDraft(draft);
-          return {
-            ...current,
-            entries: [entry, ...current.entries],
-            drafts: current.drafts.filter((item) => item.id !== draftId),
-            dayNotes: appendNoteLine(current.dayNotes, draft.day, draft.rawInput),
-            updatedAt: nowIso()
-          };
-        }),
       updateEntry: (entryId, patch) =>
         commit((current) => ({
           ...current,
-          entries: current.entries.map((entry) =>
-            entry.id === entryId ? normalizeEntry({ ...entry, ...patch, updatedAt: nowIso() }) : entry
-          ),
+          entries: current.entries.map((entry) => (entry.id === entryId ? { ...entry, ...patch, updatedAt: nowIso() } : entry)),
           updatedAt: nowIso()
         })),
       deleteEntry: (entryId) =>
-        commit((current) => ({ ...current, entries: current.entries.filter((entry) => entry.id !== entryId), updatedAt: nowIso() })),
+        commit((current) => {
+          const entries = current.entries.filter((entry) => entry.id !== entryId);
+          return entries.length === current.entries.length ? current : { ...current, entries, updatedAt: nowIso() };
+        }),
+      restoreEntry: (entry, noteText) =>
+        commit((current) => {
+          if (current.entries.some((item) => item.id === entry.id)) return current;
+          return {
+            ...current,
+            entries: [entry, ...current.entries],
+            dayNotes:
+              noteText !== undefined
+                ? updateDayNotes(current.dayNotes, entry.day, noteText)
+                : appendNoteLine(current.dayNotes, entry.day, entry.rawInput ?? entry.title, { allowDuplicate: true }),
+            updatedAt: nowIso()
+          };
+        }),
+      rememberFood: (line, food) =>
+        commit((current) => {
+          const key = normalizeMealLine(line);
+          if (!key) return current;
+          return {
+            ...current,
+            corrections: upsertCorrection(current.corrections, {
+              key,
+              title: food.title,
+              servingLabel: food.servingLabel,
+              macros: food.macros,
+              portion: food.portion,
+              items: food.items,
+              uses: 0,
+              updatedAt: nowIso()
+            }),
+            updatedAt: nowIso()
+          };
+        }),
+      forgetFood: (line) =>
+        commit((current) => {
+          const key = normalizeMealLine(line);
+          const corrections = current.corrections.filter((item) => item.key !== key);
+          return corrections.length === current.corrections.length ? current : { ...current, corrections, updatedAt: nowIso() };
+        }),
       logWeight: (day, weightLbs, note) =>
-        commit((current) => ({
-          ...current,
-          goal: { ...current.goal, currentWeightLbs: weightLbs },
-          weightLogs: [weightLogForDay(day, weightLbs, note), ...current.weightLogs],
-          updatedAt: nowIso()
-        })),
+        commit((current) => {
+          // One log per day: logging again replaces that day's value.
+          const weightLogs = [weightLogForDay(day, weightLbs, note), ...current.weightLogs.filter((log) => log.day !== day)];
+          const latest = weightLogs.slice().sort((a, b) => b.day.localeCompare(a.day))[0];
+          return { ...current, goal: { ...current.goal, currentWeightLbs: latest?.weightLbs ?? weightLbs }, weightLogs, updatedAt: nowIso() };
+        }),
       addSavedMeal: (meal) =>
         commit((current) => ({
           ...current,
           savedMeals: [{ ...meal, id: createId("saved"), createdAt: nowIso() }, ...current.savedMeals],
           updatedAt: nowIso()
         })),
+      deleteSavedMeal: (mealId) =>
+        commit((current) => ({ ...current, savedMeals: current.savedMeals.filter((meal) => meal.id !== mealId), updatedAt: nowIso() })),
+      restoreSavedMeal: (meal) =>
+        commit((current) =>
+          current.savedMeals.some((item) => item.id === meal.id) ? current : { ...current, savedMeals: [meal, ...current.savedMeals], updatedAt: nowIso() }
+        ),
       logSavedMeal: (mealId, day) =>
         commit((current) => {
           const meal = current.savedMeals.find((item) => item.id === mealId);
           if (!meal) return current;
+          const timestamp = nowIso();
           const entry: FoodEntry = {
             id: createId("entry_saved"),
             day,
@@ -307,28 +333,46 @@ export function LocalDataProvider({ children }: { children: ReactNode }) {
             confidence: 1,
             sourceLabel: "Saved meal",
             portion: meal.portion,
-            createdAt: nowIso(),
-            updatedAt: nowIso()
+            createdAt: timestamp,
+            updatedAt: timestamp
           };
           return {
             ...current,
             entries: [entry, ...current.entries],
-            savedMeals: current.savedMeals.map((item) => (item.id === mealId ? { ...item, lastLoggedAt: nowIso() } : item)),
+            savedMeals: current.savedMeals.map((item) => (item.id === mealId ? { ...item, lastLoggedAt: timestamp } : item)),
             dayNotes: appendNoteLine(current.dayNotes, day, meal.title, { allowDuplicate: true }),
-            updatedAt: nowIso()
+            updatedAt: timestamp
           };
         }),
-      exportText: () => (data ? serializeExport(data) : ""),
+      exportText: () => (dataRef.current ? serializeExport(dataRef.current) : ""),
+      previewImport: (text) => {
+        const report = parseImportText(text);
+        return summarize(report.data, report.dropped);
+      },
       importText: (text) => {
-        const imported = normalizeLocalData(parseImportText(text));
+        const report = parseImportText(text);
+        const current = dataRef.current;
+        // Exports never contain the API key or folder grant, so keep the ones on this device.
+        const imported: AmyLocalData = {
+          ...report.data,
+          settings: {
+            ...report.data.settings,
+            openRouterKey: report.data.settings.openRouterKey || current?.settings.openRouterKey || "",
+            androidExportDirectoryUri: current?.settings.androidExportDirectoryUri
+          }
+        };
+        dataRef.current = imported;
         setData(imported);
         void saveLocalData(imported);
-      },
-      resetDemo: () => {
-        void loadLocalData().then((fresh) => setData(normalizeLocalData(fresh)));
+        return summarize(imported, report.dropped);
       }
     }),
-    [data, ready, selectedDay]
+    [commit]
+  );
+
+  const value = useMemo<AppDataContextValue>(
+    () => ({ data, ready, loadError, saveError, today, selectedDay, ...actions }),
+    [actions, data, loadError, ready, saveError, selectedDay, today]
   );
 
   return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;

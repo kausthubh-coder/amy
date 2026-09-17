@@ -65,7 +65,7 @@ For Android widget, permission, config plugin, package metadata, or native build
 
 Before opening a PR:
 
-- Run `npm test`.
+- Run `npm test` (typecheck plus unit tests in `tests/`). Add a test when you touch line matching, agent parsing, or storage migration.
 - Run `npm run check:deps`.
 - Keep changes narrowly scoped and explain the user-facing behavior.
 - Include screenshots or notes for visible UI changes.

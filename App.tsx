@@ -4,6 +4,9 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { Barcode, Camera, Tags } from "lucide-react-native";
 
 import { ModalShell } from "./src/components/ModalShell";
+import { ErrorBoundary, RecoveryScreen } from "./src/components/RecoveryScreen";
+import { ToastProvider } from "./src/components/Toast";
+import { sanitizePrefill } from "./src/domain/lines";
 import { LocalDataProvider, useAppData } from "./src/store/AppDataContext";
 import { colors } from "./src/theme";
 import { CaptureModal } from "./src/screens/CaptureModal";
@@ -23,8 +26,10 @@ function routeFromUrl(
   try {
     const parsed = new URL(url);
     clean = `${parsed.hostname}${parsed.pathname}`.replace(/^\/+/, "");
-    prefillText = parsed.searchParams.get("text") ?? undefined;
-    barcode = parsed.searchParams.get("code") ?? parsed.searchParams.get("barcode") ?? undefined;
+    // Links can come from any app or web page, so their payloads are only ever prefilled:
+    // text is collapsed to one unsent line and barcodes stop at a confirmation card.
+    prefillText = sanitizePrefill(parsed.searchParams.get("text")) || undefined;
+    barcode = (parsed.searchParams.get("code") ?? parsed.searchParams.get("barcode") ?? "").replace(/\D/g, "").slice(0, 14) || undefined;
   } catch {
     clean = url
       .replace(/^amy:\/\//i, "")
@@ -47,7 +52,7 @@ function routeFromUrl(
 }
 
 function AppBody() {
-  const { ready, data, selectedDay } = useAppData();
+  const { ready, data, today, loadError, retryLoad, startFresh } = useAppData();
   const [activeModal, setActiveModal] = useState<AppModal>(null);
   const [captureMode, setCaptureMode] = useState<CaptureMode>("photo");
   const [statsTab, setStatsTab] = useState<StatsTab>("stats");
@@ -64,7 +69,7 @@ function AppBody() {
     ) : (
       <Camera size={28} color={colors.pink} strokeWidth={2.5} />
     );
-  const statsStreakCount = data ? currentStreakDays(data.entries, selectedDay) : 0;
+  const statsStreakCount = data ? currentStreakDays(data.entries, today) : 0;
 
   const focusTypeInput = useCallback((text?: string) => {
     setPrefillText(text ?? "");
@@ -106,7 +111,18 @@ function AppBody() {
     );
   }
 
-  if (!data?.settings.onboardingDone) return <OnboardingScreen />;
+  if (loadError || !data) {
+    return (
+      <RecoveryScreen
+        title="Amy could not open your diary"
+        detail={`${loadError ?? "Saved data is unavailable."}\n\nNothing has been deleted. Try again first. If it keeps failing, copy your raw data somewhere safe before starting fresh.`}
+        onRetry={retryLoad}
+        onStartFresh={startFresh}
+      />
+    );
+  }
+
+  if (!data.settings.onboardingDone) return <OnboardingScreen />;
 
   return (
     <View style={styles.shell}>
@@ -126,7 +142,13 @@ function AppBody() {
         <SettingsModal />
       </ModalShell>
       <ModalShell visible={activeModal === "capture"} title={captureTitle} titleIcon={captureTitleIcon} onClose={() => setActiveModal(null)}>
-        <CaptureModal mode={captureMode} onDone={() => setActiveModal(null)} focusTypeInput={() => focusTypeInput()} prefillBarcode={prefillBarcode} />
+        <CaptureModal
+          mode={captureMode}
+          onDone={() => setActiveModal(null)}
+          focusTypeInput={() => focusTypeInput()}
+          openSettings={() => setActiveModal("settings")}
+          prefillBarcode={prefillBarcode}
+        />
       </ModalShell>
     </View>
   );
@@ -135,10 +157,14 @@ function AppBody() {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <LocalDataProvider>
-        <StatusBar barStyle="light-content" backgroundColor={colors.bg} translucent={false} />
-        <AppBody />
-      </LocalDataProvider>
+      <StatusBar barStyle="light-content" backgroundColor={colors.bg} translucent={false} />
+      <ErrorBoundary>
+        <LocalDataProvider>
+          <ToastProvider>
+            <AppBody />
+          </ToastProvider>
+        </LocalDataProvider>
+      </ErrorBoundary>
     </SafeAreaProvider>
   );
 }

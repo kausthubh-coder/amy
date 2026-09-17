@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { colors } from "../theme";
 import { InteractivePressable } from "./InteractivePressable";
+import { ToastViewport } from "./Toast";
 
 export function ModalShell({
   visible,
@@ -38,7 +39,7 @@ export function ModalShell({
                 <Text style={styles.title}>{title}</Text>
               </View>
             ) : null}
-            <InteractivePressable accessibilityLabel={closeLabel} onPress={onClose} style={styles.close}>
+            <InteractivePressable accessibilityRole="button" accessibilityLabel={closeLabel} onPress={onClose} style={styles.close}>
               <X size={28} color={colors.muted} strokeWidth={2.4} />
             </InteractivePressable>
           </View>
@@ -47,6 +48,7 @@ export function ModalShell({
           </ScrollView>
         </View>
         </KeyboardAvoidingView>
+        {visible ? <ToastViewport bottom={Math.max(insets.bottom, 10) + 14} /> : null}
       </View>
     </Modal>
   );

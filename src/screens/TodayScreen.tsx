@@ -2,6 +2,7 @@ import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-spe
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
+  AppState,
   Dimensions,
   GestureResponderEvent,
   Image,
@@ -21,45 +22,40 @@ import type { KeyboardEvent, NativeSyntheticEvent, TextLayoutEventData } from "r
 import { Barcode, Camera, Flame, Mic, Plus, Settings } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { AgentError } from "../agent/client";
+import { estimateTextLines } from "../agent/estimate";
+import { findLocalMatch, relevantKnownFoods } from "../agent/match";
+import { DraftParts } from "../agent/parse";
+import { shouldUseWebSearch } from "../agent/prompt";
 import { InteractivePressable } from "../components/InteractivePressable";
-import { ModalShell } from "../components/ModalShell";
 import { MacroRing, ProgressBar } from "../components/NutritionBits";
-import { formatPortionLabel, macrosForPortion, portionGrams, targetsFromCalories, totalsForDay } from "../domain/nutrition";
+import { ToastViewport, useToast } from "../components/Toast";
+import { buildLineRows, entriesWithoutLines, isLoggableLine, LineRow as GenericLineRow, sanitizePrefill, singleLineEdit } from "../domain/lines";
+import { totalsForDay } from "../domain/nutrition";
 import { createId } from "../domain/seed";
 import { currentStreakDays } from "../domain/streaks";
-import { FoodDraft, FoodEntry, FoodPortion, MacroTotals, PortionUnit } from "../domain/types";
+import { FoodDraft, FoodEntry, FoodSource } from "../domain/types";
 import { feedback } from "../services/feedback";
 import { getLocationContext } from "../services/location";
-import { estimateMealText } from "../services/openRouter";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
 import { labelForDay } from "../utils/date";
+import { FoodEditModal, FoodFields } from "./FoodEditModal";
 
 export type CaptureMode = "type" | "barcode" | "photo" | "label" | "mic";
 export type AppModal = "stats" | "settings" | "saved" | "capture" | null;
 
-type LinePhase = "searching" | "calculating" | "done" | "error";
+type LinePhase = "estimating" | "searching" | "error" | "needs-calories" | "not-food";
 type LineStatus = {
   phase: LinePhase;
   runId: number;
-  entryId?: string;
   message?: string;
 };
+type LineRow = GenericLineRow<LineStatus>;
 
-type LineRow = {
-  key: string;
-  text: string;
-  norm: string;
-  completed: boolean;
-  entry?: FoodEntry;
-  status?: LineStatus;
-};
-
-const phaseText: Record<LinePhase, string> = {
-  searching: "Searching",
-  calculating: "Calculating",
-  done: "",
-  error: "Tap to edit"
+const activePhaseText: Record<"estimating" | "searching", string> = {
+  estimating: "Estimating",
+  searching: "Searching"
 };
 
 const animatedNativeDriver = Platform.OS !== "web";
@@ -73,6 +69,12 @@ const FLOATING_HEADER_GUARD = 20;
 const FLOATING_PANEL_BG = "rgba(32, 32, 34, 0.72)";
 const FLOATING_PANEL_ACTIVE_BG = "rgba(42, 42, 46, 0.84)";
 const FLOATING_PANEL_LINE = "rgba(255, 255, 255, 0.16)";
+const ANALYZE_DEBOUNCE_MS = 350;
+const REESTIMATE_SETTLE_MS = 1500;
+const MAX_LINES_PER_REQUEST = 8;
+
+// Lines the agent already judged "not food" this session, so notes like "felt tired" are not re-sent.
+const notFoodLines = new Set<string>();
 
 if (Platform.OS === "android") {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
@@ -83,147 +85,45 @@ function animateLayout() {
   LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
 }
 
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function isDaySwipeGesture(gesture: { dx: number; dy: number }) {
   return Math.abs(gesture.dx) > 24 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1;
-}
-
-function normalizeMealLine(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function lineKey(index: number, text: string) {
-  return `${index}:${normalizeMealLine(text)}`;
-}
-
-function splitLogLines(text: string) {
-  return text.replace(/\r\n/g, "\n").split("\n");
-}
-
-function buildLineRows(text: string, entries: FoodEntry[], statuses: Record<string, LineStatus>): LineRow[] {
-  const buckets = new Map<string, FoodEntry[]>();
-  entries
-    .slice()
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    .forEach((entry) => {
-      const key = normalizeMealLine(entry.rawInput ?? entry.title);
-      if (!key) return;
-      const list = buckets.get(key) ?? [];
-      list.push(entry);
-      buckets.set(key, list);
-    });
-
-  const used = new Map<string, number>();
-  const lines = splitLogLines(text);
-  return lines.map((line, index) => {
-    const norm = normalizeMealLine(line);
-    const key = lineKey(index, line);
-    let entry: FoodEntry | undefined;
-    if (norm) {
-      const bucket = buckets.get(norm) ?? [];
-      const usedCount = used.get(norm) ?? 0;
-      entry = bucket[usedCount];
-      used.set(norm, usedCount + 1);
-    }
-    return { key, text: line, norm, completed: index < lines.length - 1, entry, status: statuses[key] };
-  });
-}
-
-function countLineNorms(text: string) {
-  const counts = new Map<string, number>();
-  splitLogLines(text).forEach((line) => {
-    const norm = normalizeMealLine(line);
-    if (!norm) return;
-    counts.set(norm, (counts.get(norm) ?? 0) + 1);
-  });
-  return counts;
 }
 
 function measuredLineHeight(lineCount: number) {
   return Math.max(NOTE_LINE_HEIGHT, Math.ceil(lineCount) * NOTE_LINE_HEIGHT);
 }
 
-function totalMacros(drafts: FoodDraft[]): MacroTotals {
-  return drafts.reduce(
-    (sum, draft) => ({
-      calories: sum.calories + draft.macros.calories,
-      carbs: Math.round((sum.carbs + draft.macros.carbs) * 10) / 10,
-      protein: Math.round((sum.protein + draft.macros.protein) * 10) / 10,
-      fat: Math.round((sum.fat + draft.macros.fat) * 10) / 10
-    }),
-    { calories: 0, carbs: 0, protein: 0, fat: 0 }
-  );
+function deviceLocale() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().locale || "en-US";
+  } catch {
+    return "en-US";
+  }
 }
 
-function draftForLine(drafts: FoodDraft[], rawInput: string, day: string): FoodDraft {
-  if (!drafts.length) {
-    return {
-      id: createId("draft_empty"),
-      day,
-      rawInput,
-      title: rawInput,
-      servingLabel: "1 serving",
-      macros: { calories: 0, carbs: 0, protein: 0, fat: 0 },
-      source: "manual",
-      confidence: 0.1,
-      sourceLabel: "Manual",
-      createdAt: new Date().toISOString()
-    };
-  }
-
-  if (drafts.length === 1) {
-    const draft = drafts[0]!;
-    return { ...draft, rawInput, title: draft.title.trim() || rawInput };
-  }
-
-  const confidence = drafts.reduce((sum, draft) => sum + draft.confidence, 0) / drafts.length;
+function draftFromParts(parts: DraftParts | FoodFields, rawInput: string, day: string, source: FoodSource, extra: { confidence: number; sourceLabel: string; assumptions?: string }): FoodDraft {
   return {
     id: createId("draft_line"),
     day,
     rawInput,
-    title: rawInput,
-    servingLabel: `${drafts.length} items`,
-    macros: totalMacros(drafts),
-    source: drafts[0]?.source ?? "ai_text",
-    confidence,
-    sourceLabel: drafts[0]?.sourceLabel ?? "Amy estimate",
+    title: parts.title.trim() || rawInput,
+    servingLabel: parts.servingLabel,
+    macros: parts.macros,
+    source,
+    confidence: extra.confidence,
+    sourceLabel: extra.sourceLabel,
+    portion: parts.portion,
+    items: parts.items,
+    assumptions: extra.assumptions,
     createdAt: new Date().toISOString()
   };
 }
 
-function numeric(value: string, fallback: number) {
-  const parsed = Number(value.replace(/,/g, ""));
-  return Number.isFinite(parsed) ? parsed : fallback;
+function isLowConfidence(entry: FoodEntry) {
+  return !entry.userEdited && entry.confidence < 0.6 && (entry.source === "ai_text" || entry.source === "ai_photo");
 }
 
-function inputAmount(value: string): number | undefined {
-  const parsed = Number(value.replace(/,/g, ""));
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-function formatInputAmount(value: number | undefined) {
-  if (value === undefined || !Number.isFinite(value)) return "";
-  return Number(value.toFixed(2)).toString();
-}
-
-function servingAmountForPortion(portion: FoodPortion): number | undefined {
-  if (portion.unit === "serving") return portion.amount;
-  if (portion.servingGrams) return portion.amount / portion.servingGrams;
-  return undefined;
-}
-
-function canEditServingAmount(portion: FoodPortion) {
-  return portion.baseUnit === "serving" || Boolean(portion.servingGrams);
-}
-
-function canEditGramAmount(portion: FoodPortion) {
-  return portion.baseUnit === "g" || Boolean(portion.servingGrams);
-}
-
-function PhaseIndicator({ phase }: { phase: LinePhase }) {
+function PhaseIndicator({ label }: { label: string }) {
   const [dotCount, setDotCount] = useState(1);
   const opacity = useRef(new Animated.Value(0.65)).current;
 
@@ -242,238 +142,13 @@ function PhaseIndicator({ phase }: { phase: LinePhase }) {
     };
   }, [opacity]);
 
-  const label = phase === "error" ? phaseText.error : `${phaseText[phase]}${".".repeat(dotCount)}`;
-
   return (
-    <Animated.View style={[styles.phasePill, { opacity }]}>
-      <Text style={[styles.linePhaseText, phase === "error" && styles.lineErrorText]}>{label}</Text>
+    <Animated.View accessibilityLabel={label} style={[styles.phasePill, { opacity }]}>
+      <Text style={styles.linePhaseText}>
+        {label}
+        {".".repeat(dotCount)}
+      </Text>
     </Animated.View>
-  );
-}
-
-function FoodEditModal({
-  entry,
-  onClose,
-  onSave,
-  onDelete
-}: {
-  entry?: FoodEntry;
-  onClose: () => void;
-  onSave: (entry: FoodEntry, patch: Partial<FoodEntry>) => void;
-  onDelete: (entry: FoodEntry) => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [servingLabel, setServingLabel] = useState("");
-  const [calories, setCalories] = useState("");
-  const [carbs, setCarbs] = useState("");
-  const [protein, setProtein] = useState("");
-  const [fat, setFat] = useState("");
-  const [portionServings, setPortionServings] = useState("");
-  const [portionGramAmount, setPortionGramAmount] = useState("");
-  const [activePortionUnit, setActivePortionUnit] = useState<PortionUnit>("serving");
-
-  const setMacroInputs = (macros: MacroTotals) => {
-    setCalories(String(macros.calories));
-    setCarbs(String(macros.carbs));
-    setProtein(String(macros.protein));
-    setFat(String(macros.fat));
-  };
-
-  useEffect(() => {
-    if (!entry) return;
-    setTitle(entry.title);
-    setServingLabel(entry.servingLabel);
-    setMacroInputs(entry.macros);
-    if (entry.portion) {
-      setActivePortionUnit(entry.portion.unit);
-      setPortionServings(formatInputAmount(servingAmountForPortion(entry.portion)));
-      setPortionGramAmount(formatInputAmount(portionGrams(entry.portion)));
-    } else {
-      setActivePortionUnit("serving");
-      setPortionServings("");
-      setPortionGramAmount("");
-    }
-  }, [entry]);
-
-  const target = targetsFromCalories(Math.max(0, Math.round(numeric(calories, entry?.macros.calories ?? 0))));
-  const canUseServings = entry?.portion ? canEditServingAmount(entry.portion) : false;
-  const canUseGrams = entry?.portion ? canEditGramAmount(entry.portion) : false;
-  const nutritionEditable = !entry?.portion;
-
-  const syncPortion = (unit: PortionUnit, rawValue: string) => {
-    if (!entry?.portion) return;
-    const amount = inputAmount(rawValue);
-    if (amount === undefined) return;
-    setMacroInputs(macrosForPortion({ ...entry.portion, amount, unit }));
-  };
-
-  const changePortionServings = (value: string) => {
-    setActivePortionUnit("serving");
-    setPortionServings(value);
-    const amount = inputAmount(value);
-    if (amount !== undefined && entry?.portion?.servingGrams) {
-      setPortionGramAmount(formatInputAmount(amount * entry.portion.servingGrams));
-    }
-    syncPortion("serving", value);
-  };
-
-  const changePortionGrams = (value: string) => {
-    setActivePortionUnit("g");
-    setPortionGramAmount(value);
-    const amount = inputAmount(value);
-    if (amount !== undefined && entry?.portion?.servingGrams) {
-      setPortionServings(formatInputAmount(amount / entry.portion.servingGrams));
-    }
-    syncPortion("g", value);
-  };
-
-  const buildPortionPatch = (): FoodPortion | undefined => {
-    if (!entry?.portion) return undefined;
-    const unit = activePortionUnit === "g" && canUseGrams ? "g" : "serving";
-    const fallback =
-      unit === "g" ? (portionGrams(entry.portion) ?? entry.portion.amount) : (servingAmountForPortion(entry.portion) ?? entry.portion.amount);
-    return {
-      ...entry.portion,
-      amount: inputAmount(unit === "g" ? portionGramAmount : portionServings) ?? fallback,
-      unit
-    };
-  };
-
-  const handleSave = () => {
-    if (!entry) return;
-    const nextPortion = buildPortionPatch();
-    const nextMacros = nextPortion
-      ? macrosForPortion(nextPortion)
-      : {
-          calories: Math.max(0, Math.round(numeric(calories, entry.macros.calories))),
-          carbs: Math.max(0, Math.round(numeric(carbs, entry.macros.carbs) * 10) / 10),
-          protein: Math.max(0, Math.round(numeric(protein, entry.macros.protein) * 10) / 10),
-          fat: Math.max(0, Math.round(numeric(fat, entry.macros.fat) * 10) / 10)
-        };
-    const patch: Partial<FoodEntry> = {
-      title: title.trim() || entry.title,
-      servingLabel: nextPortion ? formatPortionLabel(nextPortion) : servingLabel.trim() || entry.servingLabel,
-      macros: nextMacros
-    };
-    if (nextPortion) patch.portion = nextPortion;
-    onSave(entry, patch);
-  };
-
-  return (
-    <ModalShell visible={Boolean(entry)} title="Edit Food" onClose={onClose}>
-      {entry ? (
-        <View style={styles.editStack}>
-          <View style={styles.editCard}>
-            <Text style={styles.editLabel}>Food</Text>
-            <TextInput value={title} onChangeText={setTitle} placeholder="Food name" placeholderTextColor={colors.dim} style={styles.editInput} />
-            {entry.portion ? null : (
-              <TextInput
-                value={servingLabel}
-                onChangeText={setServingLabel}
-                placeholder="Serving size"
-                placeholderTextColor={colors.dim}
-                style={styles.editInput}
-              />
-            )}
-          </View>
-
-          {entry.portion ? (
-            <View style={styles.editCard}>
-              <Text style={styles.editLabel}>Portion</Text>
-              <View style={styles.portionInputs}>
-                <View style={styles.portionField}>
-                  <Text style={styles.portionLabel}>Servings</Text>
-                  <TextInput
-                    value={portionServings}
-                    onChangeText={changePortionServings}
-                    editable={canUseServings}
-                    keyboardType="decimal-pad"
-                    placeholder="1"
-                    placeholderTextColor={colors.dim}
-                    style={[styles.portionInput, !canUseServings && styles.portionInputDisabled]}
-                  />
-                </View>
-                <View style={styles.portionField}>
-                  <Text style={styles.portionLabel}>Grams</Text>
-                  <TextInput
-                    value={portionGramAmount}
-                    onChangeText={changePortionGrams}
-                    editable={canUseGrams}
-                    keyboardType="decimal-pad"
-                    placeholder="g"
-                    placeholderTextColor={colors.dim}
-                    style={[styles.portionInput, !canUseGrams && styles.portionInputDisabled]}
-                  />
-                </View>
-              </View>
-              <Text style={styles.editHint}>
-                Base {entry.portion.servingLabel} - {entry.portion.baseMacros.calories.toLocaleString()} cal
-              </Text>
-            </View>
-          ) : null}
-
-          <View style={styles.editCard}>
-            <Text style={styles.editLabel}>Nutrition total</Text>
-            <TextInput
-              value={calories}
-              onChangeText={setCalories}
-              editable={nutritionEditable}
-              keyboardType="number-pad"
-              placeholder="Calories"
-              placeholderTextColor={colors.dim}
-              style={[styles.editInput, !nutritionEditable && styles.readOnlyInput]}
-            />
-            <View style={styles.macroInputs}>
-              <TextInput
-                value={carbs}
-                onChangeText={setCarbs}
-                editable={nutritionEditable}
-                keyboardType="decimal-pad"
-                placeholder="Carbs"
-                placeholderTextColor={colors.dim}
-                style={[styles.macroInput, !nutritionEditable && styles.readOnlyInput]}
-              />
-              <TextInput
-                value={protein}
-                onChangeText={setProtein}
-                editable={nutritionEditable}
-                keyboardType="decimal-pad"
-                placeholder="Protein"
-                placeholderTextColor={colors.dim}
-                style={[styles.macroInput, !nutritionEditable && styles.readOnlyInput]}
-              />
-              <TextInput
-                value={fat}
-                onChangeText={setFat}
-                editable={nutritionEditable}
-                keyboardType="decimal-pad"
-                placeholder="Fat"
-                placeholderTextColor={colors.dim}
-                style={[styles.macroInput, !nutritionEditable && styles.readOnlyInput]}
-              />
-            </View>
-            <Text style={styles.editHint}>Target shape from this calorie value: C {target.carbsTarget} · P {target.proteinTarget} · F {target.fatTarget}</Text>
-          </View>
-
-          <View style={styles.editActions}>
-            <InteractivePressable
-              feedbackKind="delete"
-              onPress={() => onDelete(entry)}
-              style={[styles.editButton, styles.deleteButton]}
-            >
-              <Text style={styles.deleteText}>Remove</Text>
-            </InteractivePressable>
-            <InteractivePressable
-              feedbackKind="edit"
-              onPress={handleSave}
-              style={[styles.editButton, styles.saveButton]}
-            >
-              <Text style={styles.saveText}>Save</Text>
-            </InteractivePressable>
-          </View>
-        </View>
-      ) : null}
-    </ModalShell>
   );
 }
 
@@ -488,15 +163,19 @@ export function TodayScreen({
   dictationSignal?: number;
   prefillText?: string;
 }) {
-  const { data, selectedDay, shiftDay, updateDayNote, addEntryFromDraft, updateEntry, deleteEntry } = useAppData();
+  const { data, today, selectedDay, saveError, shiftDay, goToToday, updateDayNote, addEntryFromDraft, updateEntry, deleteEntry, restoreEntry, rememberFood, forgetFood, addSavedMeal } =
+    useAppData();
+  const { showToast } = useToast();
   const [workingText, setWorkingText] = useState("");
+  const [commitLast, setCommitLast] = useState(false);
   const [lineStatuses, setLineStatuses] = useState<Record<string, LineStatus>>({});
-  const [notice, setNotice] = useState("");
+  const [retryTick, setRetryTick] = useState(0);
   const [listening, setListening] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [manualLine, setManualLine] = useState<{ key: string; text: string } | null>(null);
   const [calorieOverlayVisible, setCalorieOverlayVisible] = useState(false);
   const [lineHeights, setLineHeights] = useState<Record<string, number>>({});
   const [noteScrollY, setNoteScrollY] = useState(0);
@@ -511,25 +190,28 @@ export function TodayScreen({
   const dictationRequestedRef = useRef(false);
   const speechBaseTextRef = useRef("");
   const workingTextRef = useRef("");
+  const commitLastRef = useRef(false);
   const selectedDayRef = useRef(selectedDay);
   const entriesRef = useRef<FoodEntry[]>([]);
   const statusRef = useRef<Record<string, LineStatus>>({});
   const lineRunRef = useRef<Record<string, number>>({});
-  const pruningRef = useRef(new Set<string>());
+  const pendingReestimateRef = useRef(new Map<string, number>());
   const externalNoteRef = useRef("");
+  const dataRef = useRef(data);
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
 
   const note = data?.dayNotes.find((item) => item.day === selectedDay)?.text ?? "";
   const entries = useMemo(() => data?.entries.filter((entry) => entry.day === selectedDay) ?? [], [data?.entries, selectedDay]);
   const totals = useMemo(() => (data ? totalsForDay(data.entries, selectedDay) : { calories: 0, carbs: 0, protein: 0, fat: 0 }), [data, selectedDay]);
-  const streakCount = useMemo(() => currentStreakDays(data?.entries ?? [], selectedDay), [data?.entries, selectedDay]);
-  const lineRows = useMemo(() => buildLineRows(workingText, entries, lineStatuses), [entries, lineStatuses, workingText]);
+  const streakCount = useMemo(() => currentStreakDays(data?.entries ?? [], today), [data?.entries, today]);
+  const lineRows = useMemo(() => buildLineRows(workingText, entries, lineStatuses, commitLast), [commitLast, entries, lineStatuses, workingText]);
   const editingEntry = useMemo(() => entries.find((entry) => entry.id === editingEntryId), [editingEntryId, entries]);
+  const hasKey = Boolean(data?.settings.openRouterKey.trim());
   const compactChrome = windowWidth < 390;
   const dockSideInset = windowWidth >= 720 ? Math.max(18, (windowWidth - 720) / 2) : compactChrome ? 14 : 18;
   const floatingHeaderTop = Math.max(insets.top + (compactChrome ? 4 : 8), compactChrome ? 38 : 40);
-  const contentTopInset = floatingHeaderTop + FLOATING_HEADER_HEIGHT + (compactChrome ? 16 : FLOATING_HEADER_GUARD);
+  const contentTopInset = floatingHeaderTop + FLOATING_HEADER_HEIGHT + (compactChrome ? 16 : FLOATING_HEADER_GUARD) + (saveError ? 44 : 0);
   const keyboardDockOffset =
     inputFocused && keyboardOpen && keyboardHeight > 0
       ? Platform.OS === "ios"
@@ -540,33 +222,43 @@ export function TodayScreen({
   const dockReserve = dockBottom + 92;
   const measuredTextWidth = Math.max(80, windowWidth - 36 - LINE_RAIL_WIDTH - NOTE_ROW_GAP);
 
-  useEffect(() => {
-    workingTextRef.current = workingText;
-  }, [workingText]);
+  workingTextRef.current = workingText;
+  commitLastRef.current = commitLast;
+  selectedDayRef.current = selectedDay;
+  entriesRef.current = entries;
+  statusRef.current = lineStatuses;
+  dataRef.current = data;
 
-  useEffect(() => {
-    selectedDayRef.current = selectedDay;
-  }, [selectedDay]);
+  const persistNote = useCallback(
+    (day: string, text: string) => {
+      const trimmed = text.trimEnd();
+      updateDayNote(day, trimmed);
+      externalNoteRef.current = trimmed;
+    },
+    [updateDayNote]
+  );
 
+  // Day change: load that day's note. Entries that somehow lost their line get one back, so
+  // nothing can count toward the total while being invisible in the log.
   useEffect(() => {
-    entriesRef.current = entries;
-  }, [entries]);
-
-  useEffect(() => {
-    statusRef.current = lineStatuses;
-  }, [lineStatuses]);
-
-  useEffect(() => {
-    externalNoteRef.current = note;
-    setWorkingText(note);
+    const dayEntries = dataRef.current?.entries.filter((entry) => entry.day === selectedDay) ?? [];
+    const orphans = entriesWithoutLines(note, dayEntries);
+    const repaired = orphans.length ? [note.trimEnd(), ...orphans.map((entry) => (entry.rawInput ?? entry.title).replace(/[\r\n]+/g, " "))].filter(Boolean).join("\n") : note;
+    externalNoteRef.current = repaired;
+    if (repaired !== note) updateDayNote(selectedDay, repaired);
+    setWorkingText(repaired);
+    setCommitLast(Boolean(repaired.trim()));
     setLineStatuses({});
     setLineHeights({});
     setNoteScrollY(0);
-    setNotice("");
     setEditingEntryId(null);
+    setManualLine(null);
     setCalorieOverlayVisible(false);
+    pendingReestimateRef.current.clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDay]);
 
+  // Lines appended outside the editor (photo, barcode, saved meal) merge into what is being typed.
   useEffect(() => {
     if (note === externalNoteRef.current) return;
     const previousExternalNote = externalNoteRef.current;
@@ -585,18 +277,17 @@ export function TodayScreen({
     if (nextText === workingTextRef.current) return;
     animateLayout();
     setWorkingText(nextText);
+    setCommitLast(true);
   }, [inputFocused, listening, note]);
 
   useEffect(() => {
     const activeKeys = new Set(buildLineRows(workingText, entriesRef.current, {}).map((row) => row.key));
-    setLineStatuses((current) => {
+    const prune = <T,>(current: Record<string, T>) => {
       const next = Object.fromEntries(Object.entries(current).filter(([key]) => activeKeys.has(key)));
       return Object.keys(next).length === Object.keys(current).length ? current : next;
-    });
-    setLineHeights((current) => {
-      const next = Object.fromEntries(Object.entries(current).filter(([key]) => activeKeys.has(key)));
-      return Object.keys(next).length === Object.keys(current).length ? current : next;
-    });
+    };
+    setLineStatuses(prune);
+    setLineHeights(prune);
   }, [workingText]);
 
   const rememberLineHeight = useCallback((key: string, event: NativeSyntheticEvent<TextLayoutEventData>) => {
@@ -606,81 +297,231 @@ export function TodayScreen({
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (externalNoteRef.current === workingTextRef.current) return;
-      updateDayNote(selectedDay, workingTextRef.current.trimEnd());
-      externalNoteRef.current = workingTextRef.current.trimEnd();
+      if (externalNoteRef.current === workingTextRef.current.trimEnd()) return;
+      persistNote(selectedDay, workingTextRef.current);
     }, 500);
     return () => clearTimeout(timer);
-  }, [selectedDay, updateDayNote, workingText]);
+  }, [persistNote, selectedDay, workingText]);
 
-  const setLinePhase = useCallback((key: string, runId: number, phase: LinePhase, patch: Partial<LineStatus> = {}) => {
+  // Leaving the app commits the line being typed and flushes the note.
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") return;
+      persistNote(selectedDayRef.current, workingTextRef.current);
+      if (workingTextRef.current.trim()) setCommitLast(true);
+    });
+    return () => subscription.remove();
+  }, [persistNote]);
+
+  const setStatus = useCallback((key: string, status: LineStatus | null) => {
     animateLayout();
-    setLineStatuses((current) => ({
-      ...current,
-      [key]: { ...(current[key] ?? { runId }), ...patch, runId, phase }
-    }));
+    setLineStatuses((current) => {
+      if (!status) {
+        if (!(key in current)) return current;
+        const { [key]: _removed, ...rest } = current;
+        return rest;
+      }
+      return { ...current, [key]: status };
+    });
   }, []);
 
-	  const analyzeLine = useCallback(
-	    async (row: LineRow) => {
-	      if (!data || !row.completed || !row.norm || row.text.trim().length < 4) return;
-	      const day = selectedDay;
-	      const runId = (lineRunRef.current[row.key] ?? 0) + 1;
-	      lineRunRef.current[row.key] = runId;
-	      setLinePhase(row.key, runId, "searching");
-	      await delay(360);
+  const agentContext = useCallback(async (lines: string[]) => {
+    const current = dataRef.current;
+    const location = current?.settings.locationForRestaurants ? await getLocationContext() : {};
+    const batch = new Set(lines.map((line) => line.trim().toLowerCase()));
+    const earlierLines = buildLineRows(workingTextRef.current, entriesRef.current, {})
+      .filter((row) => row.entry && !batch.has(row.text.trim().toLowerCase()))
+      .map((row) => `${row.text.trim()} (${row.entry?.macros.calories ?? 0} kcal)`);
+    return {
+      location,
+      context: {
+        now: new Date(),
+        locale: deviceLocale(),
+        locationLabel: location.label,
+        countryCode: location.countryCode,
+        earlierLines,
+        knownFoods: relevantKnownFoods(lines, current?.corrections ?? [], current?.savedMeals ?? [])
+      }
+    };
+  }, []);
 
-	      const locationContext = data.settings.locationForRestaurants ? await getLocationContext() : {};
-	      if (lineRunRef.current[row.key] !== runId || selectedDayRef.current !== day) return;
-	      setLinePhase(row.key, runId, "calculating");
-	      await delay(260);
-
-	      const result = await estimateMealText(row.text.trim(), day, {
-        calorieBias: data.settings.calorieBias,
-        locationLabel: locationContext.label,
-        openRouterKey: data.settings.openRouterKey,
-        openRouterModel: data.settings.openRouterModel
+  const reportAgentError = useCallback(
+    (error: AgentError) => {
+      showToast({
+        kind: "error",
+        message: error.message,
+        actionLabel: error.kind === "auth" || error.kind === "credits" || error.kind === "model" ? "Settings" : undefined,
+        onAction: () => openModal("settings")
       });
-      if (lineRunRef.current[row.key] !== runId || selectedDayRef.current !== day) return;
-
-      const latestRows = buildLineRows(workingTextRef.current, entriesRef.current, statusRef.current);
-      const stillVisible = latestRows.some((latestRow) => latestRow.key === row.key && latestRow.norm === row.norm && !latestRow.entry);
-      if (!stillVisible) return;
-
-      const draft = draftForLine(result.drafts, row.text.trim(), day);
-      const entry = addEntryFromDraft(draft, row.text.trim());
-      setLinePhase(row.key, runId, "done", { entryId: entry.id, message: result.error ?? result.notice });
-      updateDayNote(day, workingTextRef.current.trimEnd());
-      externalNoteRef.current = workingTextRef.current.trimEnd();
-      const nextNotice = locationContext.error ?? result.error ?? "";
-      setNotice(/add an openrouter key/i.test(nextNotice) ? "" : nextNotice);
-      void feedback("log");
     },
-    [addEntryFromDraft, data, selectedDay, setLinePhase, updateDayNote]
+    [openModal, showToast]
   );
 
+  const analyzeRows = useCallback(
+    async (rows: LineRow[]) => {
+      const current = dataRef.current;
+      if (!current || !rows.length) return;
+      const day = selectedDayRef.current;
+      const stillWanted = (row: LineRow, runId: number) =>
+        lineRunRef.current[row.key] === runId &&
+        selectedDayRef.current === day &&
+        buildLineRows(workingTextRef.current, entriesRef.current, {}, commitLastRef.current).some((latest) => latest.key === row.key && latest.completed && !latest.entry);
+
+      const remote: Array<{ row: LineRow; runId: number }> = [];
+      rows.forEach((row) => {
+        const runId = (lineRunRef.current[row.key] ?? 0) + 1;
+        lineRunRef.current[row.key] = runId;
+        const text = row.text.trim();
+        const local = findLocalMatch(text, current.corrections, current.savedMeals);
+        if (local) {
+          addEntryFromDraft(draftFromParts(local, text, day, local.source, { confidence: local.confidence, sourceLabel: local.sourceLabel }), text, { appendNoteLine: false });
+          void feedback("log");
+          return;
+        }
+        if (!current.settings.openRouterKey.trim()) {
+          setStatus(row.key, { phase: "needs-calories", runId });
+          return;
+        }
+        setStatus(row.key, { phase: shouldUseWebSearch(text) ? "searching" : "estimating", runId });
+        remote.push({ row, runId });
+      });
+
+      for (let start = 0; start < remote.length; start += MAX_LINES_PER_REQUEST) {
+        const chunk = remote.slice(start, start + MAX_LINES_PER_REQUEST);
+        const lines = chunk.map(({ row }) => row.text.trim());
+        try {
+          const { location, context } = await agentContext(lines);
+          const results = await estimateTextLines(
+            lines,
+            { apiKey: current.settings.openRouterKey, model: current.settings.openRouterModel, bias: current.settings.calorieBias },
+            context
+          );
+          let logged = 0;
+          chunk.forEach(({ row, runId }, index) => {
+            if (!stillWanted(row, runId)) return;
+            const result = results[index];
+            const text = row.text.trim();
+            if (!result || result.status === "error") {
+              setStatus(row.key, { phase: "error", runId, message: result?.error.message ?? "No estimate came back for this line." });
+            } else if (result.status === "not-food") {
+              notFoodLines.add(row.norm);
+              setStatus(row.key, { phase: "not-food", runId, message: result.note });
+            } else {
+              const { draft } = result;
+              addEntryFromDraft(
+                draftFromParts(draft, text, day, "ai_text", { confidence: draft.confidence, sourceLabel: draft.sourceLabel, assumptions: draft.assumptions }),
+                text,
+                { appendNoteLine: false }
+              );
+              setStatus(row.key, null);
+              logged += 1;
+            }
+          });
+          if (logged) void feedback("log");
+          if (location.error && logged) showToast({ kind: "info", message: location.error });
+        } catch (error) {
+          const agentError = error instanceof AgentError ? error : new AgentError("network", error instanceof Error ? error.message : "The estimate failed.");
+          chunk.forEach(({ row, runId }) => {
+            if (lineRunRef.current[row.key] === runId) setStatus(row.key, { phase: "error", runId, message: agentError.message });
+          });
+          reportAgentError(agentError);
+          if (agentError.fatal) {
+            remote.slice(start + MAX_LINES_PER_REQUEST).forEach(({ row, runId }) => setStatus(row.key, { phase: "error", runId, message: agentError.message }));
+            return;
+          }
+        }
+      }
+    },
+    [addEntryFromDraft, agentContext, reportAgentError, setStatus, showToast]
+  );
+
+  const reestimateEntry = useCallback(
+    async (entry: FoodEntry, options: { manual?: boolean } = {}) => {
+      const current = dataRef.current;
+      if (!current) return;
+      const row = buildLineRows(workingTextRef.current, entriesRef.current, {}, true).find((item) => item.entry?.id === entry.id);
+      const text = (row?.text ?? entry.rawInput ?? entry.title).trim();
+      if (!text) return;
+      if (!current.settings.openRouterKey.trim()) {
+        if (options.manual) showToast({ kind: "info", message: "Add an OpenRouter key in Settings to re-estimate.", actionLabel: "Settings", onAction: () => openModal("settings") });
+        return;
+      }
+      const key = row?.key ?? "";
+      const runId = (lineRunRef.current[key] ?? 0) + 1;
+      if (key) {
+        lineRunRef.current[key] = runId;
+        setStatus(key, { phase: shouldUseWebSearch(text) ? "searching" : "estimating", runId });
+      }
+      try {
+        const { context } = await agentContext([text]);
+        const [result] = await estimateTextLines(
+          [text],
+          { apiKey: current.settings.openRouterKey, model: current.settings.openRouterModel, bias: current.settings.calorieBias },
+          context
+        );
+        if (key) setStatus(key, null);
+        if (!entriesRef.current.some((item) => item.id === entry.id)) return;
+        if (result?.status === "ok") {
+          const { draft } = result;
+          updateEntry(entry.id, {
+            title: draft.title.trim() || text,
+            servingLabel: draft.servingLabel,
+            macros: draft.macros,
+            portion: draft.portion,
+            items: draft.items,
+            assumptions: draft.assumptions,
+            confidence: draft.confidence,
+            sourceLabel: draft.sourceLabel,
+            source: "ai_text",
+            userEdited: undefined
+          });
+          if (options.manual) showToast({ kind: "success", message: `Re-estimated: ${draft.macros.calories.toLocaleString()} cal` });
+        } else if (options.manual) {
+          showToast({ kind: "error", message: result?.status === "error" ? result.error.message : "Amy does not think this line is food." });
+        }
+      } catch (error) {
+        if (key) setStatus(key, null);
+        const agentError = error instanceof AgentError ? error : new AgentError("network", "The estimate failed.");
+        if (options.manual) reportAgentError(agentError);
+      }
+    },
+    [agentContext, openModal, reportAgentError, setStatus, showToast, updateEntry]
+  );
+
+  // Estimate completed lines that have no entry yet. Everything pending goes out as one batch.
   useEffect(() => {
     if (!data) return;
     const timer = setTimeout(() => {
-	      const rows = buildLineRows(workingTextRef.current, entriesRef.current, statusRef.current);
-	      rows.forEach((row) => {
-	        if (!row.completed || !row.norm || row.text.trim().length < 4 || row.entry) return;
-	        const status = statusRef.current[row.key];
-	        if (status) return;
-	        void analyzeLine(row);
-	      });
-	    }, 120);
+      const rows = buildLineRows(workingTextRef.current, entriesRef.current, statusRef.current, commitLastRef.current);
+      const pending = rows.filter((row) => row.completed && !row.entry && !row.status && isLoggableLine(row.text) && !notFoodLines.has(row.norm));
+      if (pending.length) void analyzeRows(pending);
+    }, ANALYZE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [
-    analyzeLine,
-    data,
-    data?.settings.calorieBias,
-    data?.settings.locationForRestaurants,
-    data?.settings.openRouterKey,
-    data?.settings.openRouterModel,
-    selectedDay,
-    workingText
-  ]);
+  }, [analyzeRows, commitLast, data, entries, retryTick, selectedDay, workingText]);
+
+  // A line edited in place keeps its entry; once typing settles, AI-made entries refresh themselves.
+  useEffect(() => {
+    if (!pendingReestimateRef.current.size) return;
+    const timer = setTimeout(() => {
+      const ids = Array.from(pendingReestimateRef.current.keys());
+      pendingReestimateRef.current.clear();
+      const rows = buildLineRows(workingTextRef.current, entriesRef.current, {}, commitLastRef.current);
+      ids.forEach((id) => {
+        const row = rows.find((item) => item.entry?.id === id);
+        if (row?.entry && row.completed) void reestimateEntry(row.entry);
+      });
+    }, REESTIMATE_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [commitLast, reestimateEntry, workingText]);
+
+  // Adding a key later turns the "+ cal" placeholders back into estimates.
+  useEffect(() => {
+    if (!hasKey) return;
+    setLineStatuses((current) => {
+      const next = Object.fromEntries(Object.entries(current).filter(([, status]) => status.phase !== "needs-calories"));
+      return Object.keys(next).length === Object.keys(current).length ? current : next;
+    });
+  }, [hasKey]);
 
   useEffect(() => {
     if (!focusSignal) return;
@@ -688,13 +529,16 @@ export function TodayScreen({
   }, [focusSignal]);
 
   useEffect(() => {
-    if (!prefillText?.trim()) return;
-    const key = `${focusSignal}:${prefillText}`;
+    const clean = sanitizePrefill(prefillText);
+    if (!clean) return;
+    const key = `${focusSignal}:${clean}`;
     if (lastPrefillRef.current === key) return;
     lastPrefillRef.current = key;
-    const next = workingTextRef.current.trim() ? `${workingTextRef.current.trimEnd()}\n${prefillText.trim()}` : prefillText.trim();
+    // Prefilled text is never auto-submitted: it lands on the last line and waits for Enter.
+    const next = workingTextRef.current.trim() ? `${workingTextRef.current.trimEnd()}\n${clean}` : clean;
     animateLayout();
     setWorkingText(next);
+    setCommitLast(false);
     inputRef.current?.focus();
   }, [focusSignal, prefillText]);
 
@@ -755,8 +599,10 @@ export function TodayScreen({
     dictationRequestedRef.current = false;
     acceptingSpeechRef.current = false;
     setListening(false);
-    if (event.error !== "aborted" && event.error !== "no-speech" && event.error !== "speech-timeout") {
-      setNotice(event.message || "Dictation stopped.");
+    if (event.error === "no-speech" || event.error === "speech-timeout") {
+      showToast({ kind: "info", message: "Amy did not hear anything. Tap the mic to try again." });
+    } else if (event.error !== "aborted") {
+      showToast({ kind: "error", message: event.message || "Dictation stopped." });
     }
   });
   useSpeechRecognitionEvent("result", (event) => {
@@ -768,8 +614,9 @@ export function TodayScreen({
     animateLayout();
     setWorkingText(nextText);
     if (event.isFinal) {
-      updateDayNote(selectedDay, nextText);
-      externalNoteRef.current = nextText;
+      // A finished dictation is a finished line: log it without needing the keyboard's Enter.
+      persistNote(selectedDay, nextText);
+      setCommitLast(true);
       abortDictation();
     }
   });
@@ -780,17 +627,16 @@ export function TodayScreen({
       const now = Date.now();
       if (now - lastDaySwipeAtRef.current < 300) return true;
       lastDaySwipeAtRef.current = now;
-      if (workingTextRef.current.trim()) updateDayNote(selectedDay, workingTextRef.current.trimEnd());
+      persistNote(selectedDay, workingTextRef.current);
       skipNextBlurSaveRef.current = true;
       Keyboard.dismiss();
       inputRef.current?.blur();
-      setNotice("");
       animateLayout();
       void feedback("swipe");
       shiftDay(dx < 0 ? 1 : -1);
       return true;
     },
-    [selectedDay, shiftDay, updateDayNote]
+    [persistNote, selectedDay, shiftDay]
   );
 
   const rememberTouchStart = (event: GestureResponderEvent) => {
@@ -824,40 +670,42 @@ export function TodayScreen({
   const toggleDictation = useCallback(async () => {
     const recognitionState = await ExpoSpeechRecognitionModule.getStateAsync().catch(() => "inactive");
     if (listening || acceptingSpeechRef.current || recognitionState === "starting" || recognitionState === "recognizing" || recognitionState === "stopping") {
-      if (workingTextRef.current.trim()) updateDayNote(selectedDay, workingTextRef.current.trimEnd());
+      persistNote(selectedDay, workingTextRef.current);
+      if (workingTextRef.current.trim()) setCommitLast(true);
       abortDictation();
       return;
     }
     if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
-      setNotice("Speech recognition is not available on this device.");
+      showToast({ kind: "error", message: "Speech recognition is not available on this device." });
       return;
     }
     const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
     if (!permission.granted) {
-      setNotice("Microphone permission is needed for dictation.");
+      showToast({ kind: "error", message: "Microphone permission is needed for dictation." });
       return;
     }
     speechBaseTextRef.current = workingTextRef.current.trim();
     dictationRequestedRef.current = true;
     acceptingSpeechRef.current = true;
     setListening(true);
-    setNotice("");
+    const language = dataRef.current?.settings.dictationLanguage;
     try {
       ExpoSpeechRecognitionModule.start({
-        lang: data?.settings.dictationLanguage === "auto" ? "en-US" : data?.settings.dictationLanguage,
+        lang: !language || language === "auto" ? deviceLocale() : language,
         interimResults: true,
         maxAlternatives: 1,
         continuous: false,
-        addsPunctuation: true,
-        contextualStrings: ["calories", "protein", "chicken", "rice", "toast", "barcode", "sauce"]
+        addsPunctuation: false,
+        contextualStrings: ["calories", "protein", "chicken", "rice", "toast", "grams", "ounces", "sauce"]
       });
+      showToast({ kind: "info", message: "Listening. Say what you ate.", durationMs: 1800 });
     } catch {
       dictationRequestedRef.current = false;
       acceptingSpeechRef.current = false;
       setListening(false);
-      setNotice("Dictation could not start on this device.");
+      showToast({ kind: "error", message: "Dictation could not start on this device." });
     }
-  }, [abortDictation, data?.settings.dictationLanguage, listening, selectedDay, updateDayNote]);
+  }, [abortDictation, listening, persistNote, selectedDay, showToast]);
 
   useEffect(() => {
     if (!dictationSignal || lastDictationSignalRef.current === dictationSignal) return;
@@ -869,70 +717,119 @@ export function TodayScreen({
     return () => clearTimeout(timer);
   }, [dictationSignal, toggleDictation]);
 
-  const pruneDeletedLineEntries = (nextText: string) => {
-    const counts = countLineNorms(nextText);
-    const seen = new Map<string, number>();
-    entriesRef.current
-      .slice()
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      .forEach((entry) => {
-        const norm = normalizeMealLine(entry.rawInput ?? entry.title);
-        if (!norm) return;
-        const index = seen.get(norm) ?? 0;
-        seen.set(norm, index + 1);
-        if (index < (counts.get(norm) ?? 0) || pruningRef.current.has(entry.id)) return;
-        pruningRef.current.add(entry.id);
-        deleteEntry(entry.id);
-        setTimeout(() => pruningRef.current.delete(entry.id), 1200);
-      });
-  };
-
   const handleTextChange = (value: string) => {
+    const previous = workingTextRef.current;
     animateLayout();
-    pruneDeletedLineEntries(value);
+
+    // Fixing a typo keeps the logged entry (and any numbers the user corrected) attached to the line.
+    const edit = singleLineEdit(previous, value);
+    if (edit) {
+      const entry = buildLineRows(previous, entriesRef.current, {})[edit.index]?.entry;
+      if (entry) {
+        const rawInput = edit.after.trim();
+        updateEntry(entry.id, { rawInput });
+        entriesRef.current = entriesRef.current.map((item) => (item.id === entry.id ? { ...item, rawInput } : item));
+        if (!entry.userEdited && entry.source === "ai_text") pendingReestimateRef.current.set(entry.id, Date.now());
+      }
+    }
+
+    // Only entries that had a line a moment ago and lost it are removed, and that is undoable.
+    const alreadyOrphaned = new Set(entriesWithoutLines(previous, entriesRef.current).map((entry) => entry.id));
+    const removed = entriesWithoutLines(value, entriesRef.current).filter((entry) => !alreadyOrphaned.has(entry.id));
+    if (removed.length) {
+      removed.forEach((entry) => {
+        pendingReestimateRef.current.delete(entry.id);
+        deleteEntry(entry.id);
+      });
+      entriesRef.current = entriesRef.current.filter((entry) => !removed.some((item) => item.id === entry.id));
+      const removedCalories = removed.reduce((sum, entry) => sum + entry.macros.calories, 0);
+      showToast({
+        kind: "info",
+        message: removed.length === 1 ? `Removed ${removed[0]?.title ?? "food"} (${removedCalories.toLocaleString()} cal)` : `Removed ${removed.length} foods (${removedCalories.toLocaleString()} cal)`,
+        actionLabel: "Undo",
+        onAction: () => {
+          removed.forEach((entry) => restoreEntry(entry, previous.trimEnd()));
+          externalNoteRef.current = previous.trimEnd();
+          setWorkingText(previous);
+        }
+      });
+    }
+
     setWorkingText(value);
-    if (notice) setNotice("");
+    setCommitLast(false);
     if (calorieOverlayVisible) setCalorieOverlayVisible(false);
   };
 
   const replaceLineForEntry = (entry: FoodEntry, replacement: string | null) => {
-    const target = normalizeMealLine(entry.rawInput ?? entry.title);
-    if (!target) return;
-    let removed = false;
-    const nextLines = splitLogLines(workingTextRef.current)
-      .map((line) => {
-        if (!removed && normalizeMealLine(line) === target) {
-          removed = true;
-          return replacement;
-        }
-        return line;
-      })
-      .filter((line): line is string => line !== null);
-    const next = nextLines.join("\n");
+    const rows = buildLineRows(workingTextRef.current, entriesRef.current, {});
+    const index = rows.find((row) => row.entry?.id === entry.id)?.index;
+    if (index === undefined) return workingTextRef.current;
+    const lines = rows.map((row) => row.text);
+    if (replacement === null) lines.splice(index, 1);
+    else lines[index] = replacement.replace(/[\r\n]+/g, " ");
+    const next = lines.join("\n");
     animateLayout();
     setWorkingText(next);
-    updateDayNote(selectedDay, next.trimEnd());
-    externalNoteRef.current = next.trimEnd();
+    persistNote(selectedDay, next);
+    return next;
   };
 
   const saveEntry = (entry: FoodEntry, patch: Partial<FoodEntry>) => {
     const titleChanged = typeof patch.title === "string" && patch.title.trim() && patch.title !== entry.title;
-    updateEntry(entry.id, titleChanged ? { ...patch, rawInput: patch.title } : patch);
-    if (titleChanged) replaceLineForEntry(entry, patch.title ?? entry.title);
+    const rawInput = titleChanged ? (patch.title ?? entry.title) : (entry.rawInput ?? entry.title);
+    updateEntry(entry.id, titleChanged ? { ...patch, rawInput } : patch);
+    if (titleChanged) replaceLineForEntry(entry, rawInput);
+    const merged = { ...entry, ...patch };
+    // Confirmed numbers are remembered, so typing this line again is instant and consistent.
+    if (patch.userEdited) rememberFood(rawInput, merged);
     setEditingEntryId(null);
-    setNotice("Food updated.");
+    showToast({ kind: "success", message: patch.userEdited ? `Saved. Amy will reuse this for "${rawInput.trim()}".` : "Food updated." });
   };
 
   const removeEntry = (entry: FoodEntry) => {
+    const previousText = workingTextRef.current;
     deleteEntry(entry.id);
     replaceLineForEntry(entry, null);
     setEditingEntryId(null);
-    setNotice("Food removed.");
+    showToast({
+      kind: "info",
+      message: `Removed ${entry.title}`,
+      actionLabel: "Undo",
+      onAction: () => {
+        restoreEntry(entry, previousText.trimEnd());
+        externalNoteRef.current = previousText.trimEnd();
+        setWorkingText(previousText);
+      }
+    });
+  };
+
+  const createManualEntry = (line: string, fields: FoodFields) => {
+    const text = line.trim();
+    addEntryFromDraft(draftFromParts(fields, text, selectedDay, "manual", { confidence: 1, sourceLabel: "Manual" }), text, { appendNoteLine: false });
+    rememberFood(text, fields);
+    if (manualLine) setStatus(manualLine.key, null);
+    setManualLine(null);
+    void feedback("log");
+    showToast({ kind: "success", message: `Logged ${fields.macros.calories.toLocaleString()} cal. Amy will remember "${text}".` });
+  };
+
+  const saveAsMeal = (fields: FoodFields) => {
+    addSavedMeal({ title: fields.title, servingLabel: fields.servingLabel, macros: fields.macros, portion: fields.portion });
+    showToast({ kind: "success", message: `"${fields.title}" added to saved meals.` });
+  };
+
+  const retryLine = (row: LineRow) => {
+    setStatus(row.key, null);
+    setRetryTick((tick) => tick + 1);
   };
 
   if (!data) return null;
 
   const calorieProgress = data.goal.dailyCalories > 0 ? totals.calories / data.goal.dailyCalories : 0;
+  const remaining = data.goal.dailyCalories - totals.calories;
+  const onToday = selectedDay === today;
+  const lastRow = lineRows[lineRows.length - 1];
+  const showEnterHint = inputFocused && lastRow && !lastRow.completed && !lastRow.entry && isLoggableLine(lastRow.text);
 
   return (
     <KeyboardAvoidingView
@@ -946,12 +843,20 @@ export function TodayScreen({
         <Image source={require("../../assets/icon-cat-alt.png")} style={[styles.logo, compactChrome && styles.logoCompact]} />
         <InteractivePressable
           accessibilityRole="button"
-          accessibilityLabel="Jump to today"
-          accessibilityHint="Returns the log to today's date."
-          onPress={() => shiftDay(0)}
-          style={[styles.todayPill, compactChrome && styles.todayPillCompact]}
+          accessibilityLabel={onToday ? "Today" : `${labelForDay(selectedDay)}. Jump to today`}
+          accessibilityHint={onToday ? "Swipe left or right on the log to change days." : "Returns the log to today's date."}
+          onPress={() => {
+            if (onToday) {
+              showToast({ kind: "info", message: "Swipe left or right to change days.", durationMs: 1800 });
+              return;
+            }
+            persistNote(selectedDay, workingTextRef.current);
+            goToToday();
+          }}
+          style={[styles.todayPill, compactChrome && styles.todayPillCompact, !onToday && styles.todayPillAway]}
         >
           <Text style={[styles.todayText, compactChrome && styles.todayTextCompact]}>{labelForDay(selectedDay)}</Text>
+          {onToday ? null : <Text style={styles.todayHint}>Tap for today</Text>}
         </InteractivePressable>
         <View style={[styles.topActions, compactChrome && styles.topActionsCompact]}>
           <InteractivePressable
@@ -976,6 +881,12 @@ export function TodayScreen({
         </View>
       </View>
 
+      {saveError ? (
+        <View accessibilityRole="alert" style={[styles.saveBanner, { top: floatingHeaderTop + FLOATING_HEADER_HEIGHT + 8 }]}>
+          <Text style={styles.saveBannerText}>{saveError}</Text>
+        </View>
+      ) : null}
+
       <View style={styles.body}>
         <View style={styles.logArea}>
           <View style={styles.noteColumn}>
@@ -989,15 +900,20 @@ export function TodayScreen({
               }}
               onBlur={() => {
                 if (skipNextBlurSaveRef.current) skipNextBlurSaveRef.current = false;
-                else updateDayNote(selectedDay, workingTextRef.current.trimEnd());
+                else {
+                  persistNote(selectedDay, workingTextRef.current);
+                  // Leaving the editor finishes the line being typed, so it is never silently unlogged.
+                  if (workingTextRef.current.trim()) setCommitLast(true);
+                }
                 if (dockBlurTimerRef.current) clearTimeout(dockBlurTimerRef.current);
                 dockBlurTimerRef.current = setTimeout(() => setInputFocused(false), 180);
               }}
               multiline
               scrollEnabled
               onScroll={(event) => setNoteScrollY(event.nativeEvent.contentOffset.y)}
-              placeholder="Start logging your meals..."
+              placeholder={hasKey ? "Start logging your meals...\nOne food per line, then Enter." : "Start logging your meals...\nTry: protein shake 160 cal"}
               placeholderTextColor={colors.dim}
+              accessibilityLabel={`Food log for ${labelForDay(selectedDay)}`}
               style={[styles.noteInput, { paddingTop: contentTopInset, paddingBottom: dockReserve }]}
             />
 
@@ -1018,28 +934,65 @@ export function TodayScreen({
             <View style={[styles.lineRailClip, { marginTop: contentTopInset, marginBottom: dockReserve }]}>
               <View style={[styles.lineRail, { transform: [{ translateY: -noteScrollY }] }]}>
                 {lineRows.map((row) => {
-                  const activePhase = row.status?.phase && row.status.phase !== "done" ? row.status.phase : undefined;
-                  const label = activePhase ? phaseText[activePhase] : row.entry ? `${row.entry.macros.calories.toLocaleString()} cal` : "";
-                  const canEdit = Boolean(row.entry);
                   const rowHeight = lineHeights[row.key] ?? NOTE_LINE_HEIGHT;
+                  const phase = row.status?.phase;
+                  let content: React.ReactNode = null;
+
+                  if (phase === "estimating" || phase === "searching") {
+                    content = <PhaseIndicator label={activePhaseText[phase]} />;
+                  } else if (row.entry) {
+                    const entry = row.entry;
+                    const low = isLowConfidence(entry);
+                    const label = `${low ? "~" : ""}${entry.macros.calories.toLocaleString()} cal`;
+                    content = (
+                      <InteractivePressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Edit ${entry.title}, ${entry.macros.calories} calories${low ? ", low confidence estimate" : ""}`}
+                        accessibilityHint="Opens the nutrition editor for this log line."
+                        feedbackKind="edit"
+                        onPress={() => setEditingEntryId(entry.id)}
+                        style={styles.lineCalorieHit}
+                      >
+                        <Text style={[styles.sideCalories, low && styles.sideCaloriesLow]}>{label}</Text>
+                      </InteractivePressable>
+                    );
+                  } else if (phase === "error") {
+                    content = (
+                      <InteractivePressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Estimate failed for ${row.text.trim()}. Retry`}
+                        accessibilityHint={row.status?.message}
+                        onPress={() => retryLine(row)}
+                        onLongPress={() => setManualLine({ key: row.key, text: row.text })}
+                        style={styles.lineCalorieHit}
+                      >
+                        <View style={[styles.lineChip, styles.lineChipError]}>
+                          <Text style={[styles.lineChipText, styles.lineChipErrorText]}>Retry</Text>
+                        </View>
+                      </InteractivePressable>
+                    );
+                  } else if (phase === "needs-calories") {
+                    content = (
+                      <InteractivePressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Add calories for ${row.text.trim()}`}
+                        accessibilityHint="Opens manual calorie entry for this line."
+                        feedbackKind="edit"
+                        onPress={() => setManualLine({ key: row.key, text: row.text })}
+                        style={styles.lineCalorieHit}
+                      >
+                        <View style={styles.lineChip}>
+                          <Text style={styles.lineChipText}>+ cal</Text>
+                        </View>
+                      </InteractivePressable>
+                    );
+                  } else if (showEnterHint && row.key === lastRow?.key) {
+                    content = <Text style={styles.enterHint}>↵ to log</Text>;
+                  }
+
                   return (
                     <View key={row.key} style={[styles.lineRailSlot, { height: rowHeight }]}>
-                      {canEdit ? (
-                        <InteractivePressable
-                          accessibilityRole="button"
-                          accessibilityLabel={`Edit ${row.entry?.title ?? "food"}, ${label}`}
-                          accessibilityHint="Opens the nutrition editor for this log line."
-                          feedbackKind="edit"
-                          onPress={() => setEditingEntryId(row.entry?.id ?? null)}
-                          style={styles.lineCalorieHit}
-                        >
-                          <Text style={styles.sideCalories}>{label}</Text>
-                        </InteractivePressable>
-                      ) : activePhase ? (
-                        <PhaseIndicator phase={activePhase} />
-                      ) : (
-                        <Text style={styles.sideCalories}>{label}</Text>
-                      )}
+                      {content}
                     </View>
                   );
                 })}
@@ -1049,15 +1002,9 @@ export function TodayScreen({
         </View>
       </View>
 
-      {notice ? (
-        <View pointerEvents="none" style={[styles.noticeArea, { bottom: dockBottom + 64 }]}>
-          <Text style={styles.notice}>{notice}</Text>
-        </View>
-      ) : null}
-
       {calorieOverlayVisible ? (
         <View style={[styles.calorieOverlay, { bottom: dockBottom + 66 }]}>
-          <Text style={styles.overlayTitle}>Goals</Text>
+          <Text style={styles.overlayTitle}>{onToday ? "Today" : labelForDay(selectedDay)}</Text>
           <View style={styles.overlayCalorieRow}>
             <View style={styles.overlayCalorieLabel}>
               <Text style={styles.overlayCalorieEmoji}>🔥</Text>
@@ -1067,7 +1014,10 @@ export function TodayScreen({
               {totals.calories.toLocaleString()} / {data.goal.dailyCalories.toLocaleString()}
             </Text>
           </View>
-          <ProgressBar value={calorieProgress} />
+          <ProgressBar value={calorieProgress} color={remaining < 0 ? colors.orange : colors.green} />
+          <Text style={styles.overlayRemaining}>
+            {remaining >= 0 ? `${remaining.toLocaleString()} cal left` : `${Math.abs(remaining).toLocaleString()} cal over goal`}
+          </Text>
           <View style={styles.overlayRings}>
             <MacroRing label="Carbs" value={totals.carbs} target={data.goal.carbsTarget} color={colors.pink} />
             <MacroRing label="Protein" value={totals.protein} target={data.goal.proteinTarget} color={colors.blue} />
@@ -1076,11 +1026,13 @@ export function TodayScreen({
         </View>
       ) : null}
 
+      <ToastViewport bottom={dockBottom + 64} />
+
       <View style={[styles.dock, compactChrome && styles.dockCompact, { left: dockSideInset, right: dockSideInset, bottom: dockBottom }]}>
         <InteractivePressable
           accessibilityRole="button"
-          accessibilityLabel={calorieOverlayVisible ? "Hide calorie details" : "Show calorie details"}
-          accessibilityHint="Toggles today's calorie and macro summary."
+          accessibilityLabel={`${totals.calories} calories logged. ${calorieOverlayVisible ? "Hide" : "Show"} details`}
+          accessibilityHint="Toggles the calorie and macro summary."
           onPress={() => {
             Keyboard.dismiss();
             setCalorieOverlayVisible((visible) => !visible);
@@ -1093,7 +1045,7 @@ export function TodayScreen({
         <InteractivePressable
           accessibilityRole="button"
           accessibilityLabel={listening ? "Stop dictation" : "Start dictation"}
-          accessibilityHint="Dictates a meal into today's log."
+          accessibilityHint="Dictates a meal into the log."
           accessibilityState={{ selected: listening }}
           onPress={toggleDictation}
           style={[styles.roundButton, compactChrome && styles.roundButtonCompact, listening && styles.roundButtonOn]}
@@ -1112,7 +1064,7 @@ export function TodayScreen({
         <InteractivePressable
           accessibilityRole="button"
           accessibilityLabel="Open saved meals"
-          accessibilityHint="Add a saved meal to today's log."
+          accessibilityHint="Add a saved meal to the log."
           onPress={() => openModal("saved")}
           style={[styles.roundButton, compactChrome && styles.roundButtonCompact]}
         >
@@ -1129,7 +1081,24 @@ export function TodayScreen({
         </InteractivePressable>
       </View>
 
-      <FoodEditModal entry={editingEntry} onClose={() => setEditingEntryId(null)} onSave={saveEntry} onDelete={removeEntry} />
+      <FoodEditModal
+        entry={editingEntry}
+        newLine={editingEntry ? undefined : manualLine?.text}
+        canReestimate={hasKey}
+        onClose={() => {
+          setEditingEntryId(null);
+          setManualLine(null);
+        }}
+        onSave={saveEntry}
+        onCreate={createManualEntry}
+        onDelete={removeEntry}
+        onReestimate={(entry) => {
+          setEditingEntryId(null);
+          forgetFood(entry.rawInput ?? entry.title);
+          void reestimateEntry(entry, { manual: true });
+        }}
+        onSaveAsMeal={saveAsMeal}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -1200,6 +1169,7 @@ const styles = StyleSheet.create({
   todayText: {
     color: colors.ink,
     fontSize: 18,
+    lineHeight: 22,
     fontWeight: "900"
   },
   todayTextCompact: {
@@ -1475,106 +1445,69 @@ const styles = StyleSheet.create({
   roundButtonOn: {
     backgroundColor: colors.purple
   },
-  editStack: {
-    gap: 14
+  todayPillAway: {
+    borderColor: colors.purple
   },
-  editCard: {
-    gap: 10,
-    padding: 18,
-    borderRadius: 24,
-    backgroundColor: colors.panel,
+  todayHint: {
+    color: colors.muted,
+    fontSize: 10,
+    lineHeight: 12,
+    fontWeight: "800"
+  },
+  saveBanner: {
+    position: "absolute",
+    left: 18,
+    right: 18,
+    zIndex: 19,
+    elevation: 19,
+    borderRadius: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: "rgba(255, 51, 101, 0.16)",
     borderWidth: 1,
-    borderColor: colors.line
+    borderColor: colors.pink
   },
-  editLabel: {
-    color: colors.muted,
-    fontSize: 14,
-    fontWeight: "900"
-  },
-  editInput: {
-    minHeight: 54,
-    borderRadius: 17,
-    backgroundColor: colors.panel2,
+  saveBannerText: {
     color: colors.ink,
-    fontSize: 17,
-    fontWeight: "800",
-    paddingHorizontal: 14
-  },
-  portionInputs: {
-    flexDirection: "row",
-    gap: 10
-  },
-  portionField: {
-    flex: 1,
-    gap: 6
-  },
-  portionLabel: {
-    color: colors.dim,
     fontSize: 12,
-    fontWeight: "900"
+    lineHeight: 16,
+    fontWeight: "800"
   },
-  portionInput: {
-    minHeight: 54,
-    borderRadius: 17,
-    backgroundColor: colors.panel2,
-    color: colors.ink,
-    fontSize: 18,
-    fontWeight: "900",
-    paddingHorizontal: 12
+  sideCaloriesLow: {
+    color: colors.orange
   },
-  portionInputDisabled: {
-    opacity: 0.45
-  },
-  readOnlyInput: {
-    opacity: 0.72
-  },
-  macroInputs: {
-    flexDirection: "row",
-    gap: 10
-  },
-  macroInput: {
-    flex: 1,
-    minHeight: 54,
-    borderRadius: 17,
-    backgroundColor: colors.panel2,
-    color: colors.ink,
-    fontSize: 17,
-    fontWeight: "800",
-    paddingHorizontal: 12
-  },
-  editHint: {
-    color: colors.muted,
-    fontSize: 13,
-    fontWeight: "800",
-    lineHeight: 19
-  },
-  editActions: {
-    flexDirection: "row",
-    gap: 10
-  },
-  editButton: {
-    flex: 1,
-    height: 56,
+  lineChip: {
+    minWidth: 64,
+    height: 28,
     borderRadius: 999,
     alignItems: "center",
-    justifyContent: "center"
-  },
-  deleteButton: {
-    backgroundColor: colors.panel2,
+    justifyContent: "center",
+    paddingHorizontal: 10,
+    backgroundColor: colors.purpleSoft,
     borderWidth: 1,
-    borderColor: colors.line
+    borderColor: colors.purple
   },
-  saveButton: {
-    backgroundColor: colors.purple
-  },
-  deleteText: {
-    color: colors.pink,
-    fontSize: 16,
-    fontWeight: "900"
-  },
-  saveText: {
+  lineChipText: {
     color: colors.ink,
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: "900"
+  },
+  lineChipError: {
+    backgroundColor: "rgba(255, 51, 101, 0.14)",
+    borderColor: colors.pink
+  },
+  lineChipErrorText: {
+    color: colors.pink
+  },
+  enterHint: {
+    color: colors.dim,
+    fontSize: 12,
+    lineHeight: NOTE_LINE_HEIGHT,
+    fontWeight: "800"
+  },
+  overlayRemaining: {
+    color: colors.muted,
+    fontSize: 14,
+    fontWeight: "800"
   }
 });

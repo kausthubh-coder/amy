@@ -1,8 +1,20 @@
-const { createRunOncePlugin, withAppBuildGradle, withDangerousMod } = require("@expo/config-plugins");
+const { createRunOncePlugin, withAppBuildGradle, withDangerousMod, withGradleProperties } = require("@expo/config-plugins");
 const fs = require("fs");
 const path = require("path");
 
+// AsyncStorage caps its database at 6 MB by default. The diary is sharded by month, but years of
+// logging still add up, so give it room well before anyone can hit the ceiling.
+function withAmyStorageSize(config) {
+  return withGradleProperties(config, (config) => {
+    const key = "AsyncStorage_db_size_in_MB";
+    config.modResults = config.modResults.filter((item) => !(item.type === "property" && item.key === key));
+    config.modResults.push({ type: "property", key, value: "64" });
+    return config;
+  });
+}
+
 function withAmyReleaseAndroid(config) {
+  config = withAmyStorageSize(config);
   config = withDangerousMod(config, [
     "android",
     async (config) => {
@@ -21,4 +33,4 @@ function withAmyReleaseAndroid(config) {
   });
 }
 
-module.exports = createRunOncePlugin(withAmyReleaseAndroid, "with-amy-release-android", "1.0.1");
+module.exports = createRunOncePlugin(withAmyReleaseAndroid, "with-amy-release-android", "1.1.0");

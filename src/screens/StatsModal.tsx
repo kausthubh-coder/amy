@@ -82,8 +82,8 @@ function trendSummary(logs: WeightLog[], goal: number) {
     };
   }
 
-  const rawMin = Math.min(...weights, goal);
-  const rawMax = Math.max(...weights, goal);
+  const rawMin = goal > 0 ? Math.min(...weights, goal) : Math.min(...weights);
+  const rawMax = goal > 0 ? Math.max(...weights, goal) : Math.max(...weights);
   const min = Math.floor(rawMin - 2);
   const max = Math.ceil(rawMax + 2);
   const range = Math.max(1, max - min);
@@ -109,12 +109,12 @@ function trendSummary(logs: WeightLog[], goal: number) {
 }
 
 export function StatsModal({ tab }: { tab: StatsTab }) {
-  const { data, selectedDay } = useAppData();
+  const { data, selectedDay, today } = useAppData();
   const days = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(selectedDay, index - dateFromKey(selectedDay).getDay())), [selectedDay]);
   if (!data) return null;
 
   const activeDays = new Set(data.entries.map((entry) => entry.day));
-  const streakCount = currentStreakDays(data.entries, selectedDay);
+  const streakCount = currentStreakDays(data.entries, today);
   const loggedDaysCount = totalLoggedDays(data.entries);
   const selectedTotals = totalsForDay(data.entries, selectedDay);
   const weekTotals = days.reduce(
@@ -188,7 +188,7 @@ export function StatsModal({ tab }: { tab: StatsTab }) {
 	              <Text style={styles.chartTitle}>Weight</Text>
 	              <View style={styles.chartAvg}>
                   <Text style={styles.chartAvgLabel}>Weight goal</Text>
-                  <Text style={styles.chartAvgValue}>{formatWeight(data.goal.weightGoalLbs)} lbs</Text>
+                  <Text style={styles.chartAvgValue}>{data.goal.weightGoalLbs > 0 ? `${formatWeight(data.goal.weightGoalLbs)} lbs` : "Not set"}</Text>
                 </View>
 	            </View>
             {weightTrend.current ? (
@@ -207,7 +207,7 @@ export function StatsModal({ tab }: { tab: StatsTab }) {
                 </View>
                 <View style={styles.trendFrame}>
                   <Svg width="100%" height={TREND_HEIGHT} viewBox={`0 0 ${TREND_WIDTH} ${TREND_HEIGHT}`}>
-                    <Line x1="0" y1={weightTrend.goalY} x2={TREND_WIDTH} y2={weightTrend.goalY} stroke={colors.green} strokeWidth="2" strokeDasharray="7 7" />
+                    {data.goal.weightGoalLbs > 0 ? <Line x1="0" y1={weightTrend.goalY} x2={TREND_WIDTH} y2={weightTrend.goalY} stroke={colors.green} strokeWidth="2" strokeDasharray="7 7" /> : null}
                     {weightTrend.points ? (
                       <Polyline points={weightTrend.points} fill="none" stroke={colors.pink} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
                     ) : null}
@@ -243,7 +243,7 @@ export function StatsModal({ tab }: { tab: StatsTab }) {
           </View>
           <View style={styles.summaryGrid}>
             <View style={styles.summaryTile}>
-              <Text style={styles.summaryLabel}>Today eaten</Text>
+              <Text style={styles.summaryLabel}>{selectedDay === today ? "Today eaten" : "This day eaten"}</Text>
               <Text style={styles.summaryValue}>
                 {formatMacro(selectedTotals.calories)} / {data.goal.dailyCalories.toLocaleString()}
               </Text>

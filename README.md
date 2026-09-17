@@ -2,7 +2,7 @@
 
 Amy is an open-source Android calorie tracker where logging feels like writing a note.
 
-Type one food per line, press Enter, and Amy turns the line into editable calories and macros. Use saved meals for repeat foods, scan packaged foods through Open Food Facts, and optionally estimate food photos or nutrition labels with your own OpenRouter key.
+Type one food per line, press Enter, and Amy turns the line into editable calories and macros. Use saved meals for repeat foods, scan packaged foods through Open Food Facts, and optionally estimate typed lines, food photos, or nutrition labels with your own OpenRouter key. Without a key Amy never guesses: type the calories inline (`latte 190 cal`) or tap `+ cal`, and Amy remembers the numbers for next time.
 
 Amy is early, Android-first, and looking for testers who care about fast logging, local data, and non-annoying calorie tracking.
 
@@ -92,6 +92,17 @@ If install fails, please open an [install compatibility report](https://github.c
 
 Manual logging works without an account, subscription, or API key. Network services are only used when you choose a feature that needs one.
 
+### How estimates work
+
+- **Your numbers first.** Foods you corrected or entered by hand, and saved meals, are matched locally (including quantities like `2 protein shakes`) with no network call.
+- **One request per batch.** Pending lines are estimated together, with context the model needs: local time, region and units, optional rough location, what is already logged today, and your known foods.
+- **Breakdowns stay editable.** `burger, fries and a coke` keeps three items you can adjust or remove; single foods get a servings/grams portion you can scale.
+- **Honest uncertainty.** Each estimate carries the assumptions it made and a confidence level; low-confidence lines are marked with `~`. Impossible numbers (calories that cannot match the macros) are corrected before logging.
+- **Review before logging.** Photo, label, and barcode results show a confirmation card first.
+- **Failures are visible.** Errors show a `Retry` chip and a message, never a placeholder number.
+
+Measure prompt or model changes with `OPENROUTER_API_KEY=... npm run eval:agent`.
+
 ## What Needs Testing
 
 Amy needs practical Android reports more than vague praise. Useful feedback:
@@ -140,7 +151,7 @@ Amy is built around local-first logging:
 - Diary entries, saved meals, goals, weight logs, corrections, exports, and imports live in local app storage.
 - OpenRouter is optional and only used when you add your own key in Settings.
 - Open Food Facts is used for packaged-food barcode lookup.
-- Optional rough location context can help restaurant estimates and can be turned off.
+- Optional rough location context (neighborhood, city, region, country; never coordinates) can help restaurant estimates and can be turned off. Amy only requests coarse location permission.
 - Dictation may use the Google speech service on the device.
 - JSON exports intentionally remove the saved OpenRouter key.
 

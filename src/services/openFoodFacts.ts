@@ -1,5 +1,6 @@
 import { Platform } from "react-native";
 
+import { fetchWithTimeout } from "../agent/client";
 import { integrationConfig } from "../config/integrations";
 import { scaleMacros } from "../domain/nutrition";
 import { FoodDraft, FoodPortion, MacroTotals, PortionUnit } from "../domain/types";
@@ -83,7 +84,8 @@ function macroSet(product: OpenFoodFactsProduct, scope: "serving" | "100g"): Mac
 }
 
 function gramsFromText(value: string | undefined): number | undefined {
-  if (!value) return undefined;
+  // Fluid ounces are volume, not weight, so they cannot give a gram serving size.
+  if (!value || /\bfl\.?\s*oz\b/i.test(value)) return undefined;
   const match = value.match(/(\d+(?:[.,]\d+)?)\s*(kg|g|grams?|oz)\b/i);
   if (!match) return undefined;
   const amount = Number(match[1]?.replace(",", "."));
@@ -171,14 +173,14 @@ function productNutrition(product: OpenFoodFactsProduct): ProductNutrition | nul
 
 export async function lookupOpenFoodFactsProduct(barcode: string, day: string): Promise<ProductLookupResult> {
   const normalized = barcode.trim();
-  if (!normalized) return { status: "error", message: "No barcode yet.", detail: "Scan the package or type the number under the camera." };
+  if (!normalized) return { status: "error", message: "No barcode yet.", detail: "Scan the package or type the digits below." };
 
   const url = `${integrationConfig.openFoodFacts.baseUrl}/api/v2/product/${encodeURIComponent(normalized)}.json?fields=${encodeURIComponent(fields)}`;
   const headers: Record<string, string> = { Accept: "application/json" };
   if (Platform.OS !== "web") headers["User-Agent"] = "AmyCalorieTracker/1.0 (https://openamy.app)";
 
   try {
-    const response = await fetch(url, { headers });
+    const response = await fetchWithTimeout(url, { headers }, 12000);
     let body: OpenFoodFactsResponse = {};
     try {
       body = (await response.json()) as OpenFoodFactsResponse;
@@ -190,7 +192,7 @@ export async function lookupOpenFoodFactsProduct(barcode: string, day: string): 
       return {
         status: "not-found",
         message: "No Open Food Facts match yet.",
-        detail: "Try another angle, type the barcode, or log it as a photo meal."
+        detail: "Check the digits, or log it with a label photo instead."
       };
     }
     if (!response.ok) {

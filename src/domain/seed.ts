@@ -1,6 +1,6 @@
 import { integrationConfig } from "../config/integrations";
 import { toDateKey } from "../utils/date";
-import { AmyLocalData, SavedMeal } from "./types";
+import { AmyLocalData } from "./types";
 import { targetsFromCalories } from "./nutrition";
 
 export function createId(prefix: string): string {
@@ -9,34 +9,18 @@ export function createId(prefix: string): string {
 
 const now = () => new Date().toISOString();
 
-const defaultCalories = 2632;
-
-const savedMeals: SavedMeal[] = [
-  {
-    id: "saved_chicken_sandwich",
-    title: "Chick-fil-A sandwich meal",
-    servingLabel: "1 meal",
-    macros: { calories: 1150, carbs: 102, protein: 33, fat: 69 },
-    createdAt: now()
-  },
-  {
-    id: "saved_eggs_toast",
-    title: "Two eggs and toast",
-    servingLabel: "1 plate",
-    macros: { calories: 390, carbs: 34, protein: 22, fat: 18 },
-    createdAt: now()
-  }
-];
+export const DEFAULT_DAILY_CALORIES = 2000;
 
 export function seedLocalData(): AmyLocalData {
   return {
     kind: "amy-local-data",
     schemaVersion: 1,
     goal: {
-      dailyCalories: defaultCalories,
-      currentWeightLbs: 218,
-      weightGoalLbs: 154,
-      ...targetsFromCalories(defaultCalories)
+      dailyCalories: DEFAULT_DAILY_CALORIES,
+      // 0 means "not set yet"; onboarding and Settings fill these in.
+      currentWeightLbs: 0,
+      weightGoalLbs: 0,
+      ...targetsFromCalories(DEFAULT_DAILY_CALORIES)
     },
     settings: {
       onboardingDone: false,
@@ -50,19 +34,11 @@ export function seedLocalData(): AmyLocalData {
     },
     entries: [],
     drafts: [],
-    savedMeals,
-    weightLogs: [
-      {
-        id: "weight_initial",
-        day: toDateKey(new Date()),
-        weightLbs: 218,
-        note: "Starting weight",
-        createdAt: now(),
-        updatedAt: now()
-      }
-    ],
+    savedMeals: [],
+    weightLogs: [],
     dayNotes: [{ day: toDateKey(new Date()), text: "", updatedAt: now() }],
     streakRepairs: [],
+    corrections: [],
     updatedAt: now()
   };
 }

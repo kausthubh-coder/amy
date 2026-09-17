@@ -18,7 +18,10 @@
     "start": "npm run dev",
     "web": "expo start --web --host lan",
     "android": "expo run:android",
-    "test": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tests",
+    "test:unit": "tsx --test tests/*.test.ts",
+    "test": "npm run typecheck && npm run test:unit",
+    "eval:agent": "tsx scripts/eval-agent.ts",
     "check:deps": "expo install --check",
     "audit:release": "npm test && npm run check:deps && npx expo-doctor",
     "prebuild:android": "expo prebuild --platform android --no-install",
@@ -37,6 +40,7 @@
     "expo-clipboard": "~56.0.0",
     "expo-file-system": "~56.0.8",
     "expo-haptics": "~56.0.3",
+    "expo-image-manipulator": "~56.0.26",
     "expo-image-picker": "~56.0.19",
     "expo-location": "~56.0.19",
     "expo-sharing": "~56.0.20",
@@ -52,7 +56,9 @@
     "react-native-web": "^0.21.2"
   },
   "devDependencies": {
+    "@types/node": "^22.20.3",
     "@types/react": "~19.2.2",
+    "tsx": "^4.23.13",
     "typescript": "~6.0.3"
   }
 }

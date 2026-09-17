@@ -1,4 +1,4 @@
-name: Typecheck
+name: Checks
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ on:
       - main
 
 jobs:
-  typecheck:
+  checks:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -22,5 +22,5 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run TypeScript
+      - name: Typecheck and unit tests
         run: npm test
