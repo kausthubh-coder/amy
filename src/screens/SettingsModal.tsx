@@ -3,8 +3,13 @@ import { File, Paths } from "expo-file-system";
 import { StorageAccessFramework } from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { Copy, Download, FileText, Save, ShieldCheck, Upload } from "lucide-react-native";
-import React, { useState } from "react";
-import { Platform, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import React, { useEffect, useState } from "react";
+import { ActivityIndicator, Linking, Platform, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+
+import { checkOpenRouterKey } from "../agent/client";
+import { ToastKind, useToast } from "../components/Toast";
+import { CalorieBias } from "../domain/types";
+import { ImportSummary } from "../store/AppDataContext";
 
 import { InteractivePressable } from "../components/InteractivePressable";
 import { integrationConfig, privacyBoundary } from "../config/integrations";
@@ -79,7 +84,7 @@ function formatWeight(value: number) {
 }
 
 function numberFromInput(value: string, fallback: number) {
-  const numeric = Number(value);
+  const numeric = Number(value.replace(",", "."));
   return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
 }
 
@@ -89,6 +94,7 @@ function macroGrams(value: string) {
 }
 
 function goalStatus(currentWeight: number, goalWeight: number) {
+  if (currentWeight <= 0 || goalWeight <= 0) return { type: "Not set", status: "Enter your current and goal weight to track progress." };
   const delta = currentWeight - goalWeight;
   if (Math.abs(delta) < 0.5) {
     return { type: "Maintain", status: "At target weight" };
@@ -130,6 +136,22 @@ function IconAction({
   );
 }
 
+const biasOptions: Array<{ value: CalorieBias; label: string; hint: string }> = [
+  { value: "under_more", label: "-15%", hint: "AI estimates are lowered by 15%." },
+  { value: "under", label: "-7%", hint: "AI estimates are lowered by 7%." },
+  { value: "balanced", label: "As is", hint: "AI estimates are used unchanged." },
+  { value: "over", label: "+7%", hint: "AI estimates are raised by 7%, a small safety margin." },
+  { value: "over_more", label: "+15%", hint: "AI estimates are raised by 15%, a bigger safety margin." }
+];
+
+function deviceLocale() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().locale || "en-US";
+  } catch {
+    return "en-US";
+  }
+}
+
 function DataCount({ label, value }: { label: string; value: number }) {
   return (
     <View style={styles.dataCount}>
@@ -140,21 +162,38 @@ function DataCount({ label, value }: { label: string; value: number }) {
 }
 
 export function SettingsModal() {
-  const { data, selectedDay, updateGoal, updateSettings, logWeight, exportText, importText } = useAppData();
-  const [calories, setCalories] = useState(String(data?.goal.dailyCalories ?? 2632));
+  const { data, selectedDay, updateGoal, updateSettings, logWeight, exportText, previewImport, importText } = useAppData();
+  const { showToast } = useToast();
+  const [calories, setCalories] = useState(String(data?.goal.dailyCalories ?? 2000));
   const [carbs, setCarbs] = useState(String(data?.goal.carbsTarget ?? 0));
   const [protein, setProtein] = useState(String(data?.goal.proteinTarget ?? 0));
   const [fat, setFat] = useState(String(data?.goal.fatTarget ?? 0));
-  const [currentWeight, setCurrentWeight] = useState(String(data?.goal.currentWeightLbs ?? 218));
-  const [goalWeight, setGoalWeight] = useState(String(data?.goal.weightGoalLbs ?? 154));
+  const [currentWeight, setCurrentWeight] = useState(data?.goal.currentWeightLbs ? String(data.goal.currentWeightLbs) : "");
+  const [goalWeight, setGoalWeight] = useState(data?.goal.weightGoalLbs ? String(data.goal.weightGoalLbs) : "");
   const [weightNote, setWeightNote] = useState("");
   const [openRouterKey, setOpenRouterKey] = useState(data?.settings.openRouterKey ?? "");
   const [openRouterModel, setOpenRouterModel] = useState(data?.settings.openRouterModel ?? integrationConfig.openRouter.defaultModel);
   const [importValue, setImportValue] = useState("");
   const [showPasteImport, setShowPasteImport] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [pendingImport, setPendingImport] = useState<{ text: string; summary: ImportSummary } | null>(null);
+  const [keyCheck, setKeyCheck] = useState<{ busy: boolean; message: string; ok?: boolean }>({ busy: false, message: "" });
 
-  const pendingCalories = numberFromInput(calories, data?.goal.dailyCalories ?? 2632);
+  // Settings is a long sheet, so results are announced as toasts instead of text below the fold.
+  const setNotice = (message: string, kind: ToastKind = "success") => showToast({ message, kind });
+
+  // Import (or any outside change) refreshes the form instead of leaving stale numbers behind.
+  const goal = data?.goal;
+  useEffect(() => {
+    if (!goal) return;
+    setCalories(String(goal.dailyCalories));
+    setCarbs(String(goal.carbsTarget));
+    setProtein(String(goal.proteinTarget));
+    setFat(String(goal.fatTarget));
+    setCurrentWeight(goal.currentWeightLbs ? String(goal.currentWeightLbs) : "");
+    setGoalWeight(goal.weightGoalLbs ? String(goal.weightGoalLbs) : "");
+  }, [goal]);
+
+  const pendingCalories = numberFromInput(calories, data?.goal.dailyCalories ?? 2000);
 
   if (!data) return null;
 
@@ -174,7 +213,7 @@ export function SettingsModal() {
     setCarbs(String(balanced.carbsTarget));
     setProtein(String(balanced.proteinTarget));
     setFat(String(balanced.fatTarget));
-    setNotice("Macros balanced from calories. Tap Save goals to keep them.");
+    setNotice("Macros balanced from calories. Tap Save goals to keep them.", "info");
   };
 
   const saveGoals = () => {
@@ -188,9 +227,13 @@ export function SettingsModal() {
   };
 
   const saveWeightLog = () => {
-    const weight = numberFromInput(currentWeight, data.goal.currentWeightLbs);
+    const weight = numberFromInput(currentWeight, 0);
+    if (weight <= 0) {
+      setNotice("Enter your current weight first.", "error");
+      return;
+    }
     logWeight(selectedDay, weight, weightNote);
-    updateGoal({ currentWeightLbs: weight, weightGoalLbs: pendingGoalWeight });
+    updateGoal({ weightGoalLbs: pendingGoalWeight });
     setWeightNote("");
     setNotice(`Weight logged for ${labelForDay(selectedDay)}.`);
   };
@@ -200,7 +243,21 @@ export function SettingsModal() {
       openRouterKey: openRouterKey.trim(),
       openRouterModel: openRouterModel.trim() || integrationConfig.openRouter.defaultModel
     });
-    setNotice(openRouterKey.trim() ? "OpenRouter key saved locally." : "OpenRouter key cleared.");
+    setNotice(
+      openRouterKey.trim() ? "OpenRouter key saved on this device." : "Key cleared. Amy will ask for calories instead of estimating.",
+      openRouterKey.trim() ? "success" : "info"
+    );
+  };
+
+  const testKey = async () => {
+    setKeyCheck({ busy: true, message: "" });
+    const result = await checkOpenRouterKey(openRouterKey);
+    if (!result.ok) {
+      setKeyCheck({ busy: false, ok: false, message: result.message });
+      return;
+    }
+    const credit = result.remaining !== undefined ? ` · $${result.remaining.toFixed(2)} credit left` : "";
+    setKeyCheck({ busy: false, ok: true, message: `Key works${credit}${result.freeTier ? " · free tier (rate limited)" : ""}` });
   };
 
   const copyExport = async () => {
@@ -229,7 +286,7 @@ export function SettingsModal() {
       try {
         const result = await saveAndroidDownload(fileName, text, data.settings.androidExportDirectoryUri);
         if (!result.saved) {
-          setNotice("Export download canceled.");
+          setNotice("Export canceled.", "info");
           return;
         }
         if (result.directoryUri !== data.settings.androidExportDirectoryUri) {
@@ -238,7 +295,7 @@ export function SettingsModal() {
         setNotice("Export downloaded to your selected folder.");
         return;
       } catch {
-        setNotice("Download failed. Opening export options instead.");
+        setNotice("Could not write to that folder. Opening share options instead.", "error");
       }
     }
 
@@ -253,19 +310,32 @@ export function SettingsModal() {
     }
   };
 
+  // Import replaces everything, so it is always a two-step action with a preview of what arrives.
   const applyImportText = (text: string) => {
     try {
-      importText(text);
-      setImportValue("");
-      setNotice("Import complete.");
-    } catch {
-      setNotice("Import failed. Paste a full Amy JSON export.");
+      setPendingImport({ text, summary: previewImport(text) });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Import failed. Use a full Amy JSON export.", "error");
     }
+  };
+
+  const confirmImport = () => {
+    if (!pendingImport) return;
+    try {
+      const summary = importText(pendingImport.text);
+      setImportValue("");
+      setShowPasteImport(false);
+      const skipped = summary.dropped ? `; skipped ${summary.dropped} damaged records` : "";
+      setNotice(`Imported ${summary.entries.toLocaleString()} foods${skipped}. Your API key was kept.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Import failed.", "error");
+    }
+    setPendingImport(null);
   };
 
   const applyImport = () => {
     if (!hasImportValue) {
-      setNotice("Paste a full Amy JSON export first.");
+      setNotice("Paste a full Amy JSON export first.", "error");
       return;
     }
     applyImportText(importValue.trim());
@@ -278,20 +348,20 @@ export function SettingsModal() {
       const text = await picked.result.text();
       applyImportText(text);
     } catch {
-      setNotice("Import failed. Choose a full Amy JSON export file.");
+      setNotice("Could not read that file. Choose a full Amy JSON export.", "error");
     }
   };
 
   const toggleLocation = async (enabled: boolean) => {
     if (!enabled) {
       updateSettings({ locationForRestaurants: false });
-      setNotice("Restaurant location context off.");
+      setNotice("Location context off.", "info");
       return;
     }
 
-    const context = await getLocationContext();
+    const context = await getLocationContext({ fresh: true });
     updateSettings({ locationForRestaurants: Boolean(context.label) });
-    setNotice(context.label ? `Location context on: ${context.label}` : context.error ?? "Location unavailable.");
+    setNotice(context.label ? `Location on. Estimates will use: ${context.label}` : (context.error ?? "Location unavailable."), context.label ? "success" : "error");
   };
 
   return (
@@ -346,11 +416,11 @@ export function SettingsModal() {
         <View style={styles.twoCol}>
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>Current lbs</Text>
-            <TextInput value={currentWeight} onChangeText={setCurrentWeight} keyboardType="number-pad" placeholder="Current lbs" placeholderTextColor={colors.muted} style={styles.input} />
+            <TextInput value={currentWeight} onChangeText={setCurrentWeight} keyboardType="decimal-pad" placeholder="e.g. 181.5" placeholderTextColor={colors.muted} style={styles.input} />
           </View>
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>Goal lbs</Text>
-            <TextInput value={goalWeight} onChangeText={setGoalWeight} keyboardType="number-pad" placeholder="Goal lbs" placeholderTextColor={colors.muted} style={styles.input} />
+            <TextInput value={goalWeight} onChangeText={setGoalWeight} keyboardType="decimal-pad" placeholder="e.g. 165" placeholderTextColor={colors.muted} style={styles.input} />
           </View>
         </View>
         <Text style={styles.goalLine}>{pendingStatus.status}</Text>
@@ -395,33 +465,42 @@ export function SettingsModal() {
           placeholderTextColor={colors.muted}
           style={styles.input}
         />
-        <InteractivePressable feedbackKind="edit" onPress={saveAiSettings} style={styles.secondaryButton}>
-          <Text style={styles.secondaryText}>Save OpenRouter</Text>
+        <Text style={styles.rowSub}>The model is used for text and photos. Pick a vision-capable model if you use photo or label estimates.</Text>
+        <View style={styles.exportActions}>
+          <IconAction
+            icon={keyCheck.busy ? <ActivityIndicator color={colors.ink} /> : <ShieldCheck size={18} color={colors.ink} strokeWidth={3} />}
+            label="Test key"
+            onPress={testKey}
+            disabled={keyCheck.busy || !openRouterKey.trim()}
+          />
+          <IconAction icon={<Save size={18} color={colors.ink} strokeWidth={3} />} label="Save" onPress={saveAiSettings} variant="primary" />
+        </View>
+        {keyCheck.message ? <Text style={[styles.rowSub, { color: keyCheck.ok ? colors.green : colors.pink }]}>{keyCheck.message}</Text> : null}
+        <InteractivePressable accessibilityRole="link" onPress={() => void Linking.openURL(integrationConfig.openRouter.keysUrl)} style={styles.linkButton}>
+          <Text style={styles.linkText}>Get a key at openrouter.ai/keys</Text>
         </InteractivePressable>
-        <Row icon="↕" title="Calorie estimate bias" subtitle={data.settings.calorieBias.replaceAll("_", " ")}>
-          <View style={styles.segment}>
-            {(["under", "balanced", "over"] as const).map((bias) => (
-              <InteractivePressable key={bias} onPress={() => updateSettings({ calorieBias: bias })} style={[styles.segmentItem, data.settings.calorieBias === bias && styles.segmentOn]}>
-                <Text style={[styles.segmentText, data.settings.calorieBias === bias && styles.segmentTextOn]}>{bias}</Text>
+        <Row icon="↕" title="Estimate adjustment" subtitle={biasOptions.find((option) => option.value === data.settings.calorieBias)?.hint} />
+        <View style={[styles.segment, styles.segmentWide]}>
+          {biasOptions.map((option) => {
+            const selected = data.settings.calorieBias === option.value;
+            return (
+              <InteractivePressable
+                key={option.value}
+                accessibilityRole="button"
+                accessibilityLabel={option.hint}
+                accessibilityState={{ selected }}
+                onPress={() => updateSettings({ calorieBias: option.value })}
+                style={[styles.segmentItem, styles.segmentItemWide, selected && styles.segmentOn]}
+              >
+                <Text style={[styles.segmentText, selected && styles.segmentTextOn]}>{option.label}</Text>
               </InteractivePressable>
-            ))}
-          </View>
-        </Row>
-        <Row icon="⌖" title="Use location for restaurants" subtitle="Nearby context for estimates">
+            );
+          })}
+        </View>
+        <Row icon="⌖" title="Use rough location" subtitle="Sends only your area (city, region, country) with AI estimates, for restaurant and regional accuracy.">
           <Switch value={data.settings.locationForRestaurants} onValueChange={toggleLocation} trackColor={{ true: colors.green, false: colors.panel3 }} thumbColor={colors.ink} />
         </Row>
-        <Row icon="🔔" title="Daily tracking reminders">
-          <Switch value={data.settings.reminders} onValueChange={(reminders) => updateSettings({ reminders })} trackColor={{ true: colors.green, false: colors.panel3 }} thumbColor={colors.ink} />
-        </Row>
-        <Row icon="◐" title="Appearance" subtitle={data.settings.appearance}>
-          <InteractivePressable
-            onPress={() => updateSettings({ appearance: data.settings.appearance === "dark" ? "light" : data.settings.appearance === "light" ? "system" : "dark" })}
-            style={styles.smallButton}
-          >
-            <Text style={styles.smallButtonText}>Change</Text>
-          </InteractivePressable>
-        </Row>
-        <Row icon="🎙" title="Dictation language" subtitle={data.settings.dictationLanguage === "auto" ? "Auto-detect" : data.settings.dictationLanguage} />
+        <Row icon="🎙" title="Dictation language" subtitle={data.settings.dictationLanguage === "auto" ? `Follows your phone: ${deviceLocale()}` : data.settings.dictationLanguage} />
       </View>
 
       <View style={styles.card}>
@@ -435,6 +514,7 @@ export function SettingsModal() {
           <DataCount label="foods" value={data.entries.length} />
           <DataCount label="saved" value={data.savedMeals.length} />
           <DataCount label="weights" value={data.weightLogs.length} />
+          <DataCount label="remembered" value={data.corrections.length} />
         </View>
         <View style={styles.safetyBox}>
           <ShieldCheck size={20} color={colors.green} strokeWidth={2.6} />
@@ -465,6 +545,20 @@ export function SettingsModal() {
             />
           </View>
         </View>
+        {pendingImport ? (
+          <View style={styles.confirmBox}>
+            <Text style={styles.safetyTitle}>Replace everything on this device?</Text>
+            <Text style={styles.privacy}>
+              This backup has {pendingImport.summary.entries.toLocaleString()} foods, {pendingImport.summary.savedMeals} saved meals, and {pendingImport.summary.weightLogs} weight logs
+              {pendingImport.summary.dropped ? ` (${pendingImport.summary.dropped} damaged records will be skipped)` : ""}. It replaces your current{" "}
+              {data.entries.length.toLocaleString()} foods. Export first if you want to keep them.
+            </Text>
+            <View style={styles.exportActions}>
+              <IconAction icon={<FileText size={18} color={colors.ink} strokeWidth={3} />} label="Cancel" onPress={() => setPendingImport(null)} />
+              <IconAction icon={<Upload size={18} color={colors.ink} strokeWidth={3} />} label="Replace my data" onPress={confirmImport} variant="primary" />
+            </View>
+          </View>
+        ) : null}
         {showPasteImport ? (
           <View style={styles.pastePanel}>
             <TextInput
@@ -485,13 +579,37 @@ export function SettingsModal() {
           </View>
         ) : null}
       </View>
-
-      {notice ? <Text style={styles.notice}>{notice}</Text> : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  segmentWide: {
+    alignSelf: "stretch"
+  },
+  segmentItemWide: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  linkButton: {
+    minHeight: 44,
+    justifyContent: "center"
+  },
+  linkText: {
+    color: colors.blue,
+    fontSize: 14,
+    fontWeight: "900"
+  },
+  confirmBox: {
+    gap: 10,
+    padding: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.orange,
+    backgroundColor: "rgba(255, 152, 36, 0.1)"
+  },
   stack: {
     gap: 16
   },

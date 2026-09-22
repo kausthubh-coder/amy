@@ -17,6 +17,7 @@ This file does **not** relicense third-party software. Dependencies, runtime ser
 | `expo-clipboard` | 56.x | MIT |
 | `expo-file-system` | 56.x | MIT |
 | `expo-haptics` | 56.x | MIT |
+| `expo-image-manipulator` | 56.x | MIT |
 | `expo-image-picker` | 56.x | MIT |
 | `expo-location` | 56.x | MIT |
 | `expo-sharing` | 56.x | MIT |

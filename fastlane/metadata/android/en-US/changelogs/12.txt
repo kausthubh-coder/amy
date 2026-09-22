@@ -1,3 +1,1 @@
-Amy 1.0.10 is the first GPL-3.0-or-later, release-signed arm64 APK for IzzyOnDroid.
-
-If you installed debug-signed 1.0.9, export diary JSON from Settings and uninstall first; the new signing key cannot update that install in place.
+Amy 1.0.11 protects diary data with monthly storage, recovery, safer imports, and verified backups before starting fresh. Food estimates from text, photos, labels, and barcodes are easier to review. Fixes line edits, dictation commits, and widget day rollover.

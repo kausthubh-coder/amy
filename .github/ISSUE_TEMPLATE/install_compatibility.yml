@@ -1,0 +1,29 @@
+name: Install or compatibility report
+description: The APK failed to install, crashed on launch, or looks wrong on your device.
+labels: [compatibility]
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Device model
+    validations:
+      required: true
+  - type: input
+    id: android
+    attributes:
+      label: Android version
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: APK version and file name
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Include the installer's error text if there was one, and whether an older Amy build was installed.
+    validations:
+      required: true

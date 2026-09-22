@@ -41,7 +41,7 @@ Amy is an Expo/React Native Android calorie tracker focused on fast daily food l
 ## Run, Test, Build, Verify
 
 - Start Metro: `npm run dev`
-- Type-check: `npm test`
+- Type-check and unit tests: `npm test`
 - Dependency sanity: `npm run check:deps`
 - Expo project sanity: `npx expo-doctor`
 - Generate native Android project when needed: `npm run prebuild:android`
@@ -55,6 +55,9 @@ Keep generated `android/` and bulky APK outputs out of commits unless the user e
 - `App.tsx`: root shell, onboarding/settings/modal routing, Stats modal tab state.
 - `src/screens/TodayScreen.tsx`: main line-log editor, calorie rail, bottom dock, goals card, streak pill.
 - `src/screens/CaptureModal.tsx`: text/photo/barcode/mic capture flows and OpenRouter/Open Food Facts integration surfaces.
+- `src/agent/`: the estimator (prompts, JSON schema, OpenRouter client with timeouts/fallbacks, response validation, local matching of remembered foods). Pure TypeScript, unit-tested in `tests/`, measurable with `npm run eval:agent`.
+- `src/storage/`: month-sharded AsyncStorage persistence, import validation, corruption recovery.
+- `src/screens/FoodEditModal.tsx`: entry editor (items, portions, assumptions, re-estimate, save as meal).
 - `src/screens/StatsModal.tsx`: Stats/Streaks tabs, weekly charts, streak calendar and summary cards.
 - `src/store/AppDataContext.tsx`: persistent app state, entries, note lines, saved meals, app settings, widget refresh bridge.
 - `src/domain/streaks.ts`: contiguous current streak and total logged-days helpers.

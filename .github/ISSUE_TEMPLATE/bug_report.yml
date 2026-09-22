@@ -1,0 +1,43 @@
+name: Bug report
+description: Something in Amy is broken or behaves unexpectedly.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what did Amy do instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Amy version
+      description: Shown on the GitHub release you installed, e.g. 1.0.10.
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+      placeholder: Pixel 7, Android 15
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Typing and line estimates
+        - Photo or label estimates
+        - Barcode scanning
+        - Saved meals
+        - Stats and streaks
+        - Widgets
+        - Settings, export, import
+        - Other
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots help. Never paste your OpenRouter key or a full data export.

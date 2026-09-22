@@ -2,169 +2,137 @@ import { BarcodeScanningResult, CameraView, useCameraPermissions } from "expo-ca
 import * as ImagePicker from "expo-image-picker";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Platform, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
-import { Barcode, Camera, Flashlight, Image as ImageIcon, Keyboard, Mic, Plus, Sparkles, X } from "lucide-react-native";
+import { Barcode, Camera, Check, Flashlight, Image as ImageIcon, KeyRound, Minus, Plus, RotateCcw, Search, Sparkles, X } from "lucide-react-native";
 
+import { AgentError } from "../agent/client";
+import { estimateImages } from "../agent/estimate";
+import { relevantKnownFoods } from "../agent/match";
+import { DraftParts, sumMacros } from "../agent/parse";
 import { InteractivePressable } from "../components/InteractivePressable";
+import { useToast } from "../components/Toast";
+import { formatPortionLabel, macrosForPortion } from "../domain/nutrition";
 import { createId } from "../domain/seed";
-import { FoodDraft, MacroTotals } from "../domain/types";
+import { FoodDraft, FoodItem } from "../domain/types";
+import { feedback } from "../services/feedback";
+import { AgentImageInput, prepareAgentImage } from "../services/images";
 import { getLocationContext } from "../services/location";
 import { lookupOpenFoodFactsProduct } from "../services/openFoodFacts";
-import { estimateMealImage, ImageEstimateInput } from "../services/openRouter";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
+import { confidenceLabel } from "./FoodEditModal";
 import { CaptureMode } from "./TodayScreen";
 
-type AgentImage = ImageEstimateInput & {
-  id: string;
-};
+type AgentImage = AgentImageInput & { id: string };
 
-function cleanTitle(value: string) {
+type ImageReview = { parts: DraftParts; items: FoodItem[]; note: string; imageUri: string; locationNote?: string };
+
+const MAX_PHOTOS = 6;
+
+function cleanLine(value: string) {
   return value.trim().replace(/\s+/g, " ");
-}
-
-function uniqueTitles(drafts: FoodDraft[]) {
-  const seen = new Set<string>();
-  return drafts
-    .map((draft) => cleanTitle(draft.title))
-    .filter((title) => {
-      const key = title.toLowerCase();
-      if (!title || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-}
-
-function readableList(titles: string[]) {
-  if (!titles.length) return "";
-  if (titles.length === 1) return titles[0]!;
-  if (titles.length === 2) return `${titles[0]} and ${titles[1]}`;
-  return `${titles.slice(0, 2).join(", ")} and ${titles.length - 2} more`;
-}
-
-function sumMacros(drafts: FoodDraft[]): MacroTotals {
-  return drafts.reduce(
-    (total, draft) => ({
-      calories: total.calories + draft.macros.calories,
-      carbs: Math.round((total.carbs + draft.macros.carbs) * 10) / 10,
-      protein: Math.round((total.protein + draft.macros.protein) * 10) / 10,
-      fat: Math.round((total.fat + draft.macros.fat) * 10) / 10
-    }),
-    { calories: 0, carbs: 0, protein: 0, fat: 0 }
-  );
-}
-
-function averageConfidence(drafts: FoodDraft[]) {
-  if (!drafts.length) return 0.55;
-  return drafts.reduce((sum, draft) => sum + draft.confidence, 0) / drafts.length;
-}
-
-function imageLogLine(drafts: FoodDraft[], note: string, mode: "photo" | "label") {
-  const cleanNote = cleanTitle(note);
-  if (cleanNote) return cleanNote;
-  return readableList(uniqueTitles(drafts)) || (mode === "label" ? "Nutrition label photo" : "Meal photo");
-}
-
-function imageEntryDraft(drafts: FoodDraft[], line: string, imageUri: string, day: string, mode: "photo" | "label"): FoodDraft {
-  const titles = uniqueTitles(drafts);
-  const title = readableList(titles) || line;
-  const source = drafts[0]?.source ?? (mode === "label" ? "label_ocr" : "ai_photo");
-
-  if (drafts.length === 1) {
-    const draft = drafts[0]!;
-    return {
-      ...draft,
-      rawInput: line,
-      title: cleanTitle(draft.title) || title,
-      imageUri
-    };
-  }
-
-  return {
-    id: createId("draft_image"),
-    day,
-    rawInput: line,
-    title,
-    servingLabel: `${drafts.length || 1} photo items`,
-    macros: sumMacros(drafts),
-    source,
-    confidence: averageConfidence(drafts),
-    sourceLabel: drafts[0]?.sourceLabel ?? (mode === "label" ? "Label estimate" : "Amy estimate"),
-    imageUri,
-    createdAt: new Date().toISOString()
-  };
-}
-
-function imageDataUrlFromBase64(base64?: string | null, mimeType?: string | null) {
-  if (!base64) return undefined;
-  const safeMimeType = mimeType === "image/png" || mimeType === "image/webp" ? mimeType : "image/jpeg";
-  return `data:${safeMimeType};base64,${base64}`;
 }
 
 function imageFromAsset(asset: ImagePicker.ImagePickerAsset | undefined): AgentImage | undefined {
   if (!asset?.uri) return undefined;
-  return {
-    id: createId("agent_image"),
-    uri: asset.uri,
-    dataUrl: imageDataUrlFromBase64(asset.base64, asset.mimeType)
-  };
+  return { id: createId("agent_image"), uri: asset.uri, width: asset.width, height: asset.height };
+}
+
+function deviceLocale() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().locale || "en-US";
+  } catch {
+    return "en-US";
+  }
+}
+
+function MacroLine({ calories, carbs, protein, fat }: { calories: number; carbs: number; protein: number; fat: number }) {
+  return (
+    <View style={styles.macroLine}>
+      <Text style={styles.macroCalories}>{calories.toLocaleString()} cal</Text>
+      <Text style={[styles.macroChip, { color: colors.pink }]}>C {Math.round(carbs)}</Text>
+      <Text style={[styles.macroChip, { color: colors.blue }]}>P {Math.round(protein)}</Text>
+      <Text style={[styles.macroChip, { color: colors.yellow }]}>F {Math.round(fat)}</Text>
+    </View>
+  );
 }
 
 export function CaptureModal({
   mode,
   onDone,
   focusTypeInput,
+  openSettings,
   prefillBarcode
 }: {
   mode: CaptureMode;
   onDone: () => void;
   focusTypeInput: () => void;
+  openSettings: () => void;
   prefillBarcode?: string;
 }) {
   const { data, selectedDay, addEntryFromDraft } = useAppData();
+  const { showToast } = useToast();
   const [permission, requestPermission] = useCameraPermissions();
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState("");
   const [caption, setCaption] = useState("");
   const [notice, setNotice] = useState("");
   const [agentImages, setAgentImages] = useState<AgentImage[]>([]);
+  const [imageReview, setImageReview] = useState<ImageReview | null>(null);
   const [torchOn, setTorchOn] = useState(false);
-  const [cameraReady, setCameraReady] = useState(false);
-  const cameraRef = useRef<CameraView | null>(null);
+  const [manualCode, setManualCode] = useState("");
+  const [product, setProduct] = useState<FoodDraft | null>(null);
+  const [servings, setServings] = useState("1");
   const lastPrefillLookupRef = useRef("");
-  const barcodeLookupInFlightRef = useRef(false);
+  const lookupInFlightRef = useRef(false);
+  const failedCodesRef = useRef(new Map<string, number>());
   const { height } = useWindowDimensions();
 
-  const needsCamera = mode === "barcode";
-  const canUseCamera = Platform.OS !== "web" && needsCamera;
-  const cameraHeight = Math.round(Math.max(356, Math.min(430, height * 0.54)));
+  const hasKey = Boolean(data?.settings.openRouterKey.trim());
+  const canUseCamera = Platform.OS !== "web" && mode === "barcode";
+  const cameraHeight = Math.round(Math.max(300, Math.min(400, height * 0.46)));
 
   useEffect(() => {
-    setCameraReady(false);
     setCaption("");
     setAgentImages([]);
+    setImageReview(null);
+    setProduct(null);
+    setManualCode("");
     setNotice("");
+    setProgress("");
+    failedCodesRef.current.clear();
   }, [mode]);
 
-  const lookupBarcode = async (code: string) => {
-    if (barcodeLookupInFlightRef.current) return;
+  const lookupBarcode = async (code: string, source: "scan" | "typed") => {
+    if (lookupInFlightRef.current) return;
     const cleanCode = code.replace(/\D/g, "");
-    if (!cleanCode) {
-      setNotice("Aim the camera at a package barcode.");
+    if (cleanCode.length < 6) {
+      if (source === "typed") setNotice("Barcodes are 8 to 14 digits. Check the number under the bars.");
       return;
     }
-    barcodeLookupInFlightRef.current = true;
+    // A code that just failed is ignored while it stays in frame, instead of hammering Open Food Facts.
+    const failedAt = failedCodesRef.current.get(cleanCode);
+    if (source === "scan" && failedAt && Date.now() - failedAt < 60000) return;
+
+    lookupInFlightRef.current = true;
     setBusy(true);
+    setNotice("");
+    setProgress(`Looking up ${cleanCode}...`);
     try {
       const result = await lookupOpenFoodFactsProduct(cleanCode, selectedDay);
       if (result.status === "found") {
-        addEntryFromDraft(result.draft, result.draft.title, { allowDuplicateNoteLine: true });
-        setNotice("Open Food Facts logged.");
-        onDone();
+        void feedback("success");
+        setProduct(result.draft);
+        setServings(result.draft.portion?.unit === "g" ? String(result.draft.portion.amount) : "1");
       } else {
-        setNotice(result.detail ? `${result.message}\n${result.detail}` : result.message);
+        failedCodesRef.current.set(cleanCode, Date.now());
+        void feedback("warning");
+        setManualCode((current) => current || cleanCode);
+        setNotice(`${result.message}${result.detail ? `\n${result.detail}` : ""}`);
       }
     } finally {
-      barcodeLookupInFlightRef.current = false;
+      lookupInFlightRef.current = false;
       setBusy(false);
+      setProgress("");
     }
   };
 
@@ -172,35 +140,63 @@ export function CaptureModal({
     const cleanCode = prefillBarcode?.replace(/\D/g, "") ?? "";
     if (mode !== "barcode" || !cleanCode || lastPrefillLookupRef.current === cleanCode) return;
     lastPrefillLookupRef.current = cleanCode;
-    void lookupBarcode(cleanCode);
+    // Codes arriving from links are looked up but still need the user's "Log it" tap.
+    void lookupBarcode(cleanCode, "typed");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, prefillBarcode]);
 
   const handleBarcode = (result: BarcodeScanningResult) => {
-    if (!result.data || busy) return;
-    void lookupBarcode(result.data);
+    if (!result.data || busy || product) return;
+    void lookupBarcode(result.data, "scan");
+  };
+
+  const productPortion = product?.portion ? { ...product.portion, amount: Math.max(0, Number(servings.replace(",", ".")) || 0) } : undefined;
+  const productMacros = productPortion ? macrosForPortion(productPortion) : product?.macros;
+
+  const stepServings = (delta: number) => {
+    const step = product?.portion?.unit === "g" ? delta * 10 : delta * 0.5;
+    const next = Math.max(step > 0 ? step : 0, (Number(servings.replace(",", ".")) || 0) + step);
+    setServings(String(Number(next.toFixed(2))));
+  };
+
+  const logProduct = () => {
+    if (!product || !productMacros) return;
+    if (productPortion && productPortion.amount <= 0) {
+      setNotice("Enter how much you had.");
+      return;
+    }
+    const draft: FoodDraft = productPortion
+      ? { ...product, portion: productPortion, macros: productMacros, servingLabel: formatPortionLabel(productPortion) }
+      : product;
+    addEntryFromDraft(draft, draft.title, { allowDuplicateNoteLine: true });
+    showToast({ kind: "success", message: `Logged ${draft.title}: ${productMacros.calories.toLocaleString()} cal` });
+    onDone();
   };
 
   const addAgentImages = (images: AgentImage[]) => {
     if (!images.length) return;
     setNotice("");
-    setAgentImages((current) => [...current, ...images].slice(0, 6));
+    setAgentImages((current) => {
+      const next = [...current, ...images];
+      if (next.length > MAX_PHOTOS) setNotice(`Amy uses up to ${MAX_PHOTOS} photos per meal; extra photos were left out.`);
+      return next.slice(0, MAX_PHOTOS);
+    });
   };
 
   const pickAgentImages = async () => {
     if (busy) return;
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
+      const mediaPermission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!mediaPermission.granted) {
         setNotice(`Gallery permission is needed to choose ${mode === "label" ? "nutrition label photos" : "food photos"}.`);
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
-        quality: 0.72,
-        base64: true,
+        quality: 0.9,
         allowsEditing: false,
         allowsMultipleSelection: true,
-        selectionLimit: 6
+        selectionLimit: MAX_PHOTOS
       });
       if (result.canceled) return;
       addAgentImages(result.assets.map(imageFromAsset).filter((image): image is AgentImage => Boolean(image)));
@@ -212,17 +208,12 @@ export function CaptureModal({
   const takeAgentPhoto = async () => {
     if (busy) return;
     try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
+      const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!cameraPermission.granted) {
         setNotice(`Camera permission is needed to take ${mode === "label" ? "a nutrition label photo" : "a food photo"}.`);
         return;
       }
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ["images"],
-        quality: 0.72,
-        base64: true,
-        allowsEditing: false
-      });
+      const result = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.9, allowsEditing: false });
       if (result.canceled) return;
       const image = imageFromAsset(result.assets?.[0]);
       if (image) addAgentImages([image]);
@@ -231,73 +222,89 @@ export function CaptureModal({
     }
   };
 
-  const removeAgentImage = (imageId: string) => {
-    setAgentImages((current) => current.filter((image) => image.id !== imageId));
-  };
-
   const submitImageAgent = async () => {
-    if (busy) return;
+    if (busy || !data) return;
     if (!agentImages.length) {
       setNotice(`Add at least one ${mode === "label" ? "nutrition label photo" : "food photo"} first.`);
       return;
     }
+    const imageMode = mode === "label" ? "label" : "photo";
+    const note = caption.trim();
     try {
       setBusy(true);
-      setNotice("Running food agent...");
-      const note = caption.trim();
-      const locationContext = data?.settings.locationForRestaurants ? await getLocationContext() : {};
-      const estimate = await estimateMealImage({
-        images: agentImages,
-        day: selectedDay,
-        mode: mode === "label" ? "label" : "photo",
-        caption: note,
-        context: {
-          calorieBias: data?.settings.calorieBias,
-          locationLabel: locationContext.label,
-          openRouterKey: data?.settings.openRouterKey,
-          openRouterModel: data?.settings.openRouterModel
+      setNotice("");
+      setProgress(agentImages.length > 1 ? `Preparing ${agentImages.length} photos...` : "Preparing photo...");
+      const dataUrls = await Promise.all(agentImages.map(prepareAgentImage));
+      const location = data.settings.locationForRestaurants && imageMode === "photo" ? await getLocationContext() : {};
+      setProgress(imageMode === "label" ? "Reading the label..." : "Looking at your meal...");
+      const parts = await estimateImages(
+        { dataUrls, mode: imageMode, note },
+        { apiKey: data.settings.openRouterKey, model: data.settings.openRouterModel, bias: data.settings.calorieBias },
+        {
+          now: new Date(),
+          locale: deviceLocale(),
+          locationLabel: location.label,
+          countryCode: location.countryCode,
+          knownFoods: note ? relevantKnownFoods([note], data.corrections, data.savedMeals) : []
         }
+      );
+      void feedback("success");
+      setImageReview({
+        parts,
+        items: parts.items ?? [],
+        note,
+        imageUri: agentImages[0]?.uri ?? "",
+        locationNote: location.error
       });
-      if (!estimate.drafts.length) {
-        setNotice(estimate.error ?? estimate.notice ?? locationContext.error ?? "Could not analyze this image.");
-        return;
-      }
-      const line = imageLogLine(estimate.drafts, note, mode === "label" ? "label" : "photo");
-      const draft = imageEntryDraft(estimate.drafts, line, agentImages[0]?.uri ?? "", selectedDay, mode === "label" ? "label" : "photo");
-      addEntryFromDraft(draft, line, { allowDuplicateNoteLine: true });
-      setNotice(locationContext.error ?? estimate.error ?? estimate.notice ?? "Food logged.");
-      onDone();
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Could not run the food agent.");
+      void feedback("error");
+      const agentError = error instanceof AgentError ? error : null;
+      setNotice(agentError?.message ?? (error instanceof Error ? error.message : "Could not run the food agent."));
     } finally {
       setBusy(false);
+      setProgress("");
     }
   };
 
-  if (mode === "type") {
-    return (
-      <View style={styles.stack}>
-        <Text style={styles.hero}>Ready to type a meal.</Text>
-        <InteractivePressable
-          feedbackKind="success"
-          onPress={() => {
-            focusTypeInput();
-            onDone();
-          }}
-          style={styles.primaryButton}
-        >
-          <Keyboard size={22} color={colors.ink} />
-          <Text style={styles.primaryText}>Open typing</Text>
-        </InteractivePressable>
-      </View>
-    );
-  }
+  const logImageReview = () => {
+    if (!imageReview) return;
+    const imageMode = mode === "label" ? "label" : "photo";
+    const { parts, items, note } = imageReview;
+    const multi = (parts.items?.length ?? 0) > 0;
+    if (multi && !items.length) {
+      setNotice("Every item was removed. Try again or add another photo.");
+      return;
+    }
+    const macros = multi ? sumMacros(items.map((item) => item.macros)) : parts.macros;
+    const title = multi ? items.map((item) => item.title).join(", ") : parts.title;
+    const line = cleanLine(note) || cleanLine(title) || (imageMode === "label" ? "Nutrition label" : "Meal photo");
+    const draft: FoodDraft = {
+      id: createId("draft_image"),
+      day: selectedDay,
+      rawInput: line,
+      title: cleanLine(title) || line,
+      servingLabel: multi ? `${items.length} ${items.length === 1 ? "item" : "items"}` : parts.servingLabel,
+      macros,
+      source: imageMode === "label" ? "label_ocr" : "ai_photo",
+      confidence: parts.confidence,
+      sourceLabel: parts.sourceLabel,
+      portion: multi ? undefined : parts.portion,
+      items: multi ? items : undefined,
+      assumptions: parts.assumptions,
+      imageUri: imageReview.imageUri,
+      createdAt: new Date().toISOString()
+    };
+    addEntryFromDraft(draft, line, { allowDuplicateNoteLine: true });
+    showToast({ kind: "success", message: `Logged ${macros.calories.toLocaleString()} cal. Tap the line's calories to adjust.` });
+    onDone();
+  };
 
-  if (mode === "mic") {
+  if (mode === "type" || mode === "mic") {
     return (
       <View style={styles.stack}>
-        <Text style={styles.hero}>Ready for dictation.</Text>
+        <Text style={styles.hero}>{mode === "mic" ? "Ready for dictation." : "Ready to type a meal."}</Text>
         <InteractivePressable
+          accessibilityRole="button"
           feedbackKind="success"
           onPress={() => {
             focusTypeInput();
@@ -305,141 +312,247 @@ export function CaptureModal({
           }}
           style={styles.primaryButton}
         >
-          <Mic size={22} color={colors.ink} />
-          <Text style={styles.primaryText}>Go to mic</Text>
+          <Text style={styles.primaryText}>{mode === "mic" ? "Go to mic" : "Open typing"}</Text>
         </InteractivePressable>
       </View>
     );
   }
 
   if (mode === "photo" || mode === "label") {
-    const isLabelAgent = mode === "label";
-    const photoPanelTitle = isLabelAgent ? "Label photos" : "Meal photos";
-    const photoCountLabel = agentImages.length ? `${agentImages.length}/6 ready` : "No photos yet";
-    const emptyPhotoTitle = isLabelAgent ? "Add label photos" : "Add meal photos";
-    const emptyPhotoMeta = isLabelAgent ? "Use the package label or nutrition panel." : "Use the camera or choose from Photos.";
-    const takePhotoLabel = isLabelAgent ? "Take a nutrition label photo" : "Take a meal photo";
-    const choosePhotosLabel = isLabelAgent ? "Choose nutrition label photos" : "Choose meal photos";
-    const addPhotoLabel = isLabelAgent ? "Add another nutrition label photo" : "Add another meal photo";
-    const submitPhotoLabel = isLabelAgent ? "Analyze nutrition label photos" : "Analyze meal photos";
-    const submitDisabled = busy || agentImages.length === 0;
+    const isLabel = mode === "label";
 
+    if (!hasKey) {
+      return (
+        <View style={styles.stack}>
+          <View style={styles.panel}>
+            <View style={styles.panelHeader}>
+              <KeyRound size={22} color={colors.orange} strokeWidth={2.5} />
+              <Text style={styles.panelTitle}>{isLabel ? "Label reading needs an AI key" : "Photo estimates need an AI key"}</Text>
+            </View>
+            <Text style={styles.copy}>
+              Amy sends photos to the AI model you choose through OpenRouter, using your own key. Without one you can still type calories, use saved meals, and scan barcodes.
+            </Text>
+          </View>
+          <InteractivePressable accessibilityRole="button" onPress={openSettings} style={styles.primaryButton}>
+            <Text style={styles.primaryText}>Add a key in Settings</Text>
+          </InteractivePressable>
+        </View>
+      );
+    }
+
+    if (imageReview) {
+      const { parts, items } = imageReview;
+      const multi = (parts.items?.length ?? 0) > 0;
+      const totals = multi ? sumMacros(items.map((item) => item.macros)) : parts.macros;
+      const status = confidenceLabel({ source: isLabel ? "label_ocr" : "ai_photo", confidence: parts.confidence });
+      const tone = status.tone === "low" ? colors.orange : status.tone === "ok" ? colors.yellow : colors.green;
+      return (
+        <View style={styles.stack}>
+          <View style={styles.panel}>
+            <View style={styles.reviewHeader}>
+              {imageReview.imageUri ? <Image source={{ uri: imageReview.imageUri }} style={styles.reviewThumb} /> : null}
+              <View style={styles.reviewCopy}>
+                <Text style={styles.panelTitle} numberOfLines={2}>
+                  {multi ? `${items.length} ${items.length === 1 ? "item" : "items"} found` : parts.title}
+                </Text>
+                <View style={styles.statusRow}>
+                  <View style={[styles.statusDot, { backgroundColor: tone }]} />
+                  <Text style={styles.statusText}>{status.text}</Text>
+                </View>
+              </View>
+            </View>
+
+            {multi ? (
+              items.map((item, index) => (
+                <View key={`${item.title}-${index}`} style={styles.itemRow}>
+                  <View style={styles.itemCopy}>
+                    <Text style={styles.itemTitle} numberOfLines={2}>
+                      {item.title}
+                    </Text>
+                    <Text style={styles.itemMeta} numberOfLines={1}>
+                      {item.servingLabel}
+                    </Text>
+                  </View>
+                  <Text style={styles.itemCalories}>{item.macros.calories.toLocaleString()}</Text>
+                  <InteractivePressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${item.title}`}
+                    accessibilityHint="Leaves this item out of the log."
+                    feedbackKind="delete"
+                    onPress={() => setImageReview((current) => (current ? { ...current, items: current.items.filter((_, itemIndex) => itemIndex !== index) } : current))}
+                    style={styles.itemRemove}
+                  >
+                    <X size={18} color={colors.muted} strokeWidth={2.6} />
+                  </InteractivePressable>
+                </View>
+              ))
+            ) : (
+              <Text style={styles.itemMeta}>{parts.servingLabel}</Text>
+            )}
+
+            <MacroLine {...totals} />
+            {parts.assumptions ? <Text style={styles.copy}>{parts.assumptions}</Text> : null}
+            {imageReview.locationNote ? <Text style={styles.itemMeta}>{imageReview.locationNote}</Text> : null}
+          </View>
+
+          <View style={styles.buttonRow}>
+            <InteractivePressable
+              accessibilityRole="button"
+              accessibilityHint="Goes back to your photos so you can add a note or another angle."
+              onPress={() => {
+                setImageReview(null);
+                setNotice("Add a note (for example 'ate half' or 'no dressing') or another angle, then submit again.");
+              }}
+              style={styles.secondaryButton}
+            >
+              <RotateCcw size={18} color={colors.ink} strokeWidth={2.6} />
+              <Text style={styles.secondaryText}>Not right</Text>
+            </InteractivePressable>
+            <InteractivePressable accessibilityRole="button" feedbackKind="log" onPress={logImageReview} style={[styles.primaryButton, styles.grow]}>
+              <Check size={20} color={colors.ink} strokeWidth={3} />
+              <Text style={styles.primaryText}>Log {totals.calories.toLocaleString()} cal</Text>
+            </InteractivePressable>
+          </View>
+          {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+        </View>
+      );
+    }
+
+    const submitDisabled = busy || agentImages.length === 0;
     return (
       <View style={styles.stack}>
-        <View style={styles.photoPanel}>
-          <View style={styles.photoPanelHeader}>
-            <View style={styles.photoPanelIcon}>
-              <ImageIcon size={22} color={colors.pink} strokeWidth={2.5} />
-            </View>
-            <View style={styles.photoPanelCopy}>
-              <Text style={styles.photoPanelTitle}>{photoPanelTitle}</Text>
-              <Text style={styles.photoPanelMeta}>{photoCountLabel}</Text>
+        <View style={styles.panel}>
+          <View style={styles.panelHeader}>
+            <ImageIcon size={22} color={colors.pink} strokeWidth={2.5} />
+            <View style={styles.reviewCopy}>
+              <Text style={styles.panelTitle}>{isLabel ? "Label photos" : "Meal photos"}</Text>
+              <Text style={styles.itemMeta}>
+                {agentImages.length ? `${agentImages.length}/${MAX_PHOTOS} ready` : isLabel ? "Capture the nutrition facts panel, flat and in focus." : "One clear photo is enough. Add angles for big meals."}
+              </Text>
             </View>
           </View>
 
-          <View style={styles.photoActionRow}>
+          <View style={styles.buttonRow}>
             <InteractivePressable
               accessibilityRole="button"
-              accessibilityLabel={takePhotoLabel}
+              accessibilityLabel={isLabel ? "Take a nutrition label photo" : "Take a meal photo"}
               accessibilityHint="Opens the camera."
-              accessibilityState={{ disabled: busy }}
               onPress={takeAgentPhoto}
-              disabled={busy}
-              style={styles.photoSourceButton}
+              disabled={busy || agentImages.length >= MAX_PHOTOS}
+              style={[styles.secondaryButton, styles.grow]}
             >
-              <Camera size={21} color={colors.ink} strokeWidth={2.5} />
-              <Text style={styles.photoSourceText}>Camera</Text>
+              <Camera size={20} color={colors.ink} strokeWidth={2.5} />
+              <Text style={styles.secondaryText}>Camera</Text>
             </InteractivePressable>
             <InteractivePressable
               accessibilityRole="button"
-              accessibilityLabel={choosePhotosLabel}
+              accessibilityLabel={isLabel ? "Choose nutrition label photos" : "Choose meal photos"}
               accessibilityHint="Opens your photo library."
-              accessibilityState={{ disabled: busy }}
               onPress={pickAgentImages}
-              disabled={busy}
-              style={styles.photoSourceButton}
+              disabled={busy || agentImages.length >= MAX_PHOTOS}
+              style={[styles.secondaryButton, styles.grow]}
             >
-              <ImageIcon size={21} color={colors.ink} strokeWidth={2.5} />
-              <Text style={styles.photoSourceText}>Photos</Text>
+              <ImageIcon size={20} color={colors.ink} strokeWidth={2.5} />
+              <Text style={styles.secondaryText}>Photos</Text>
             </InteractivePressable>
           </View>
 
           {agentImages.length ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.previewRow}>
               {agentImages.map((image, index) => (
-                <View key={image.id} style={[styles.previewCard, busy && styles.previewCardBusy]}>
+                <View key={image.id} style={[styles.previewCard, busy && styles.dimmed]}>
                   <Image source={{ uri: image.uri }} style={styles.previewImage} />
-                  <Text style={styles.previewIndex}>{index + 1}</Text>
                   <InteractivePressable
                     accessibilityRole="button"
-                    accessibilityLabel={isLabelAgent ? `Remove nutrition label photo ${index + 1}` : `Remove meal photo ${index + 1}`}
-                    accessibilityHint="Removes this image from the analysis."
-                    accessibilityState={{ disabled: busy }}
-                    onPress={() => removeAgentImage(image.id)}
+                    accessibilityLabel={`Remove photo ${index + 1}`}
+                    onPress={() => setAgentImages((current) => current.filter((item) => item.id !== image.id))}
                     disabled={busy}
                     style={styles.removePhotoButton}
                   >
-                    <X size={19} color={colors.ink} strokeWidth={2.7} />
+                    <X size={18} color={colors.ink} strokeWidth={2.7} />
                   </InteractivePressable>
                 </View>
               ))}
-              {agentImages.length < 6 ? (
-                <InteractivePressable
-                  accessibilityRole="button"
-                  accessibilityLabel={addPhotoLabel}
-                  accessibilityHint="Opens your photo library."
-                  accessibilityState={{ disabled: busy }}
-                  onPress={pickAgentImages}
-                  disabled={busy}
-                  style={styles.addPhotoCard}
-                >
-                  <Plus size={24} color={colors.ink} strokeWidth={2.6} />
-                  <Text style={styles.addPhotoText}>Add</Text>
-                </InteractivePressable>
-              ) : null}
             </ScrollView>
-          ) : (
-            <InteractivePressable
-              accessibilityRole="button"
-              accessibilityLabel={choosePhotosLabel}
-              accessibilityHint="Opens your photo library."
-              accessibilityState={{ disabled: busy }}
-              onPress={pickAgentImages}
-              disabled={busy}
-              style={styles.emptyPhotoPreview}
-            >
-              <View style={styles.emptyPhotoIcon}>
-                <ImageIcon size={28} color={colors.muted} strokeWidth={2.5} />
-              </View>
-              <Text style={styles.emptyPhotoTitle}>{emptyPhotoTitle}</Text>
-              <Text style={styles.emptyPhotoMeta}>{emptyPhotoMeta}</Text>
-            </InteractivePressable>
-          )}
+          ) : null}
         </View>
 
         <TextInput
           value={caption}
           onChangeText={setCaption}
           multiline
-          placeholder={mode === "label" ? "Optional prompt or serving detail" : "Optional prompt"}
+          editable={!busy}
+          placeholder={isLabel ? "How much did you have? e.g. 'whole bag', '2 bars'" : "Optional note, e.g. 'ate half', 'from Chipotle'"}
           placeholderTextColor={colors.muted}
+          accessibilityLabel="Note for the estimate"
           style={styles.promptInput}
         />
 
         <InteractivePressable
           accessibilityRole="button"
-          accessibilityLabel={submitPhotoLabel}
-          accessibilityHint="Runs the image nutrition estimate."
+          accessibilityLabel={isLabel ? "Read nutrition label" : "Estimate meal"}
           accessibilityState={{ disabled: submitDisabled, busy }}
-          feedbackKind="success"
           onPress={submitImageAgent}
           disabled={submitDisabled}
-          style={[styles.submitButton, submitDisabled && styles.disabledButton]}
+          style={styles.primaryButton}
         >
-          {busy ? <ActivityIndicator color={colors.ink} /> : <Sparkles size={22} color={colors.ink} strokeWidth={2.6} />}
-          <Text style={styles.submitText}>{busy ? "Running..." : "Submit"}</Text>
+          {busy ? <ActivityIndicator color={colors.ink} /> : <Sparkles size={20} color={colors.ink} strokeWidth={2.6} />}
+          <Text style={styles.primaryText}>{busy ? progress || "Working..." : isLabel ? "Read label" : "Estimate meal"}</Text>
         </InteractivePressable>
+        {busy ? <Text style={styles.itemMeta}>This usually takes 5 to 20 seconds. You will review the result before it is logged.</Text> : null}
+        {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+      </View>
+    );
+  }
 
+  if (product && productMacros) {
+    const unitIsGrams = product.portion?.unit === "g";
+    return (
+      <View style={styles.stack}>
+        <View style={styles.panel}>
+          <Text style={styles.panelTitle}>{product.title}</Text>
+          <Text style={styles.itemMeta}>
+            Open Food Facts · {product.barcode} · per {product.portion?.servingLabel ?? product.servingLabel}
+          </Text>
+          {product.portion ? (
+            <View style={styles.stepperRow}>
+              <Text style={styles.stepperLabel}>{unitIsGrams ? "Grams" : "Servings"}</Text>
+              <InteractivePressable accessibilityRole="button" accessibilityLabel="Less" onPress={() => stepServings(-1)} style={styles.stepperButton}>
+                <Minus size={20} color={colors.ink} strokeWidth={3} />
+              </InteractivePressable>
+              <TextInput
+                value={servings}
+                onChangeText={setServings}
+                keyboardType="decimal-pad"
+                selectTextOnFocus
+                accessibilityLabel={unitIsGrams ? "Grams eaten" : "Servings eaten"}
+                style={styles.stepperInput}
+              />
+              <InteractivePressable accessibilityRole="button" accessibilityLabel="More" onPress={() => stepServings(1)} style={styles.stepperButton}>
+                <Plus size={20} color={colors.ink} strokeWidth={3} />
+              </InteractivePressable>
+            </View>
+          ) : null}
+          <MacroLine {...productMacros} />
+          <Text style={styles.itemMeta}>Open Food Facts is community data. Compare with the package if a number looks off.</Text>
+        </View>
+        <View style={styles.buttonRow}>
+          <InteractivePressable
+            accessibilityRole="button"
+            onPress={() => {
+              setProduct(null);
+              setNotice("");
+            }}
+            style={styles.secondaryButton}
+          >
+            <Barcode size={18} color={colors.ink} strokeWidth={2.4} />
+            <Text style={styles.secondaryText}>Scan again</Text>
+          </InteractivePressable>
+          <InteractivePressable accessibilityRole="button" feedbackKind="log" onPress={logProduct} style={[styles.primaryButton, styles.grow]}>
+            <Check size={20} color={colors.ink} strokeWidth={3} />
+            <Text style={styles.primaryText}>Log {productMacros.calories.toLocaleString()} cal</Text>
+          </InteractivePressable>
+        </View>
         {notice ? <Text style={styles.notice}>{notice}</Text> : null}
       </View>
     );
@@ -447,33 +560,27 @@ export function CaptureModal({
 
   return (
     <View style={styles.stack}>
-      <Text style={styles.copy}>Point at the code and hold steady inside the frame.</Text>
-
       {canUseCamera ? (
         !permission?.granted ? (
-          <InteractivePressable onPress={requestPermission} style={styles.primaryButton}>
+          <InteractivePressable accessibilityRole="button" onPress={requestPermission} style={styles.primaryButton}>
             <Camera size={22} color={colors.ink} />
-            <Text style={styles.primaryText}>Allow camera</Text>
+            <Text style={styles.primaryText}>Allow camera to scan</Text>
           </InteractivePressable>
         ) : (
           <View style={[styles.cameraCard, { minHeight: cameraHeight }]}>
             <CameraView
-              ref={cameraRef}
               style={[styles.camera, { height: cameraHeight }]}
               facing="back"
               enableTorch={torchOn}
-              onCameraReady={() => setCameraReady(true)}
-              onMountError={(event) => setNotice(event.message || "Camera could not start.")}
-              barcodeScannerSettings={mode === "barcode" ? { barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "code128"] } : undefined}
-              onBarcodeScanned={mode === "barcode" && !busy ? handleBarcode : undefined}
+              onMountError={(event) => setNotice(event.message || "Camera could not start. Type the barcode below instead.")}
+              barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "code128"] }}
+              onBarcodeScanned={busy ? undefined : handleBarcode}
             />
-            <View style={styles.cameraScrim} pointerEvents="none" />
-            {mode === "barcode" ? <View style={styles.scanFrame} pointerEvents="none" /> : null}
+            <View style={styles.scanFrame} pointerEvents="none" />
             <View style={styles.overlayTop}>
               <InteractivePressable
                 accessibilityRole="button"
                 accessibilityLabel={torchOn ? "Turn flashlight off" : "Turn flashlight on"}
-                accessibilityHint="Toggles the barcode scanner flashlight."
                 accessibilityState={{ selected: torchOn }}
                 onPress={() => setTorchOn((value) => !value)}
                 style={[styles.overlayButton, torchOn && styles.overlayButtonOn]}
@@ -482,16 +589,37 @@ export function CaptureModal({
               </InteractivePressable>
             </View>
             <View style={styles.barcodeHint} pointerEvents="none">
-              <Barcode size={24} color={colors.ink} />
-              <Text style={styles.barcodeHintText}>Align barcode inside the frame</Text>
+              {busy ? <ActivityIndicator color={colors.ink} /> : <Barcode size={22} color={colors.ink} />}
+              <Text style={styles.barcodeHintText}>{busy ? progress : "Hold the barcode inside the frame"}</Text>
             </View>
           </View>
         )
       ) : (
-        <Text style={styles.notice}>Camera preview is Android-first. Use your phone camera to scan packages.</Text>
+        <Text style={styles.copy}>Camera scanning is Android-only. Type the barcode digits instead.</Text>
       )}
 
-      {busy ? <ActivityIndicator color={colors.purple} /> : null}
+      <View style={styles.manualRow}>
+        <TextInput
+          value={manualCode}
+          onChangeText={(value) => setManualCode(value.replace(/\D/g, "").slice(0, 14))}
+          keyboardType="number-pad"
+          returnKeyType="search"
+          onSubmitEditing={() => void lookupBarcode(manualCode, "typed")}
+          placeholder="Or type the barcode digits"
+          placeholderTextColor={colors.muted}
+          accessibilityLabel="Barcode digits"
+          style={styles.manualInput}
+        />
+        <InteractivePressable
+          accessibilityRole="button"
+          accessibilityLabel="Look up barcode"
+          onPress={() => void lookupBarcode(manualCode, "typed")}
+          disabled={busy || manualCode.length < 6}
+          style={styles.manualButton}
+        >
+          {busy && !canUseCamera ? <ActivityIndicator color={colors.ink} /> : <Search size={20} color={colors.ink} strokeWidth={2.6} />}
+        </InteractivePressable>
+      </View>
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
     </View>
   );
@@ -499,7 +627,13 @@ export function CaptureModal({
 
 const styles = StyleSheet.create({
   stack: {
-    gap: 16
+    gap: 14
+  },
+  grow: {
+    flex: 1
+  },
+  dimmed: {
+    opacity: 0.55
   },
   hero: {
     color: colors.ink,
@@ -508,259 +642,221 @@ const styles = StyleSheet.create({
   },
   copy: {
     color: colors.muted,
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: "800",
-    paddingHorizontal: 2
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: "700"
   },
-  photoPanel: {
+  panel: {
     gap: 12,
-    padding: 12,
+    padding: 16,
     borderRadius: 22,
     backgroundColor: colors.panel,
     borderWidth: 1,
     borderColor: colors.line
   },
-  photoPanelHeader: {
-    minHeight: 44,
+  panelHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10
   },
-  photoPanelIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255, 51, 101, 0.14)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 51, 101, 0.34)"
-  },
-  photoPanelCopy: {
-    flex: 1,
-    minWidth: 0
-  },
-  photoPanelTitle: {
+  panelTitle: {
+    flexShrink: 1,
     color: colors.ink,
     fontSize: 18,
     fontWeight: "900"
   },
-  photoPanelMeta: {
-    marginTop: 3,
+  reviewHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12
+  },
+  reviewThumb: {
+    width: 64,
+    height: 64,
+    borderRadius: 16,
+    backgroundColor: colors.panel2
+  },
+  reviewCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4
+  },
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7
+  },
+  statusDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 999
+  },
+  statusText: {
     color: colors.muted,
     fontSize: 13,
     fontWeight: "800"
   },
-  photoActionRow: {
+  itemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.line
+  },
+  itemCopy: {
+    flex: 1,
+    minWidth: 0
+  },
+  itemTitle: {
+    color: colors.ink,
+    fontSize: 16,
+    fontWeight: "800"
+  },
+  itemMeta: {
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700"
+  },
+  itemCalories: {
+    color: colors.ink,
+    fontSize: 17,
+    fontWeight: "900"
+  },
+  itemRemove: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  macroLine: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    flexWrap: "wrap",
+    gap: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.line
+  },
+  macroCalories: {
+    color: colors.ink,
+    fontSize: 24,
+    fontWeight: "900"
+  },
+  macroChip: {
+    fontSize: 15,
+    fontWeight: "900"
+  },
+  buttonRow: {
     flexDirection: "row",
     gap: 10
   },
-  photoSourceButton: {
-    flex: 1,
-    height: 54,
-    borderRadius: 16,
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.panel2,
-    borderWidth: 1,
-    borderColor: colors.line
-  },
-  photoSourceText: {
-    color: colors.ink,
-    fontSize: 16,
-    fontWeight: "900"
-  },
-  previewRow: {
-    minHeight: 118,
-    gap: 10,
-    paddingRight: 2
-  },
-  previewCard: {
-    width: 112,
-    height: 112,
-    borderRadius: 18,
-    overflow: "hidden",
-    backgroundColor: colors.bg2,
-    borderWidth: 1,
-    borderColor: colors.line
-  },
-  previewCardBusy: {
-    opacity: 0.74
-  },
-  previewImage: {
-    width: "100%",
-    height: "100%",
-    resizeMode: "cover"
-  },
-  previewIndex: {
-    position: "absolute",
-    left: 8,
-    top: 8,
-    minWidth: 24,
-    height: 24,
-    borderRadius: 999,
-    overflow: "hidden",
-    textAlign: "center",
-    color: colors.ink,
-    fontSize: 13,
-    lineHeight: 24,
-    fontWeight: "900",
-    backgroundColor: "rgba(0, 0, 0, 0.62)"
-  },
-  removePhotoButton: {
-    position: "absolute",
-    right: 8,
-    top: 8,
-    width: 34,
-    height: 34,
-    borderRadius: 999,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(17, 17, 17, 0.82)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.26)"
-  },
-  addPhotoCard: {
-    width: 112,
-    height: 112,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
-    backgroundColor: colors.panel2,
-    borderWidth: 1,
-    borderColor: colors.line
-  },
-  addPhotoText: {
-    color: colors.ink,
-    fontSize: 14,
-    fontWeight: "900"
-  },
-  emptyPhotoPreview: {
-    minHeight: 136,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
-    backgroundColor: colors.bg2,
-    borderWidth: 1,
-    borderColor: colors.line
-  },
-  emptyPhotoIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.panel2,
-    borderWidth: 1,
-    borderColor: colors.line
-  },
-  emptyPhotoTitle: {
-    color: colors.ink,
-    fontSize: 17,
-    fontWeight: "900"
-  },
-  emptyPhotoMeta: {
-    color: colors.muted,
-    fontSize: 13,
-    fontWeight: "800",
-    textAlign: "center"
-  },
-  promptInput: {
-    minHeight: 104,
-    borderRadius: 20,
-    backgroundColor: colors.panel2,
-    borderWidth: 1,
-    borderColor: colors.line,
-    color: colors.ink,
-    fontSize: 17,
-    lineHeight: 24,
-    fontWeight: "800",
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    textAlignVertical: "top"
-  },
-  submitButton: {
-    height: 58,
+  primaryButton: {
+    minHeight: 56,
     borderRadius: 999,
     flexDirection: "row",
     gap: 9,
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 18,
     backgroundColor: colors.purple
   },
-  disabledButton: {
-    opacity: 0.48
-  },
-  submitText: {
-    color: colors.ink,
-    fontSize: 17,
-    fontWeight: "900"
-  },
-  input: {
-    minHeight: 56,
-    borderRadius: 18,
-    backgroundColor: colors.panel2,
-    color: colors.ink,
-    fontSize: 18,
-    fontWeight: "800",
-    paddingHorizontal: 14
-  },
-  galleryButton: {
-    height: 56,
-    borderRadius: 18,
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.panel2,
-    borderWidth: 1,
-    borderColor: colors.line
-  },
-  galleryText: {
+  primaryText: {
+    flexShrink: 1,
     color: colors.ink,
     fontSize: 16,
     fontWeight: "900"
   },
-  primaryButton: {
-    height: 58,
+  secondaryButton: {
+    minHeight: 56,
     borderRadius: 999,
     flexDirection: "row",
     gap: 8,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.purple
+    paddingHorizontal: 18,
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
   },
-  primaryText: {
+  secondaryText: {
     color: colors.ink,
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: "900"
   },
-  cameraCard: {
+  previewRow: {
+    gap: 10
+  },
+  previewCard: {
+    width: 104,
+    height: 104,
+    borderRadius: 18,
     overflow: "hidden",
-    borderRadius: 26,
+    backgroundColor: colors.panel2
+  },
+  previewImage: {
+    width: "100%",
+    height: "100%"
+  },
+  removePhotoButton: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.55)"
+  },
+  promptInput: {
+    minHeight: 64,
+    borderRadius: 20,
     backgroundColor: colors.panel,
     borderWidth: 1,
     borderColor: colors.line,
-    position: "relative"
+    color: colors.ink,
+    fontSize: 16,
+    fontWeight: "700",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    textAlignVertical: "top"
+  },
+  notice: {
+    color: colors.ink,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "800",
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  cameraCard: {
+    borderRadius: 26,
+    overflow: "hidden",
+    backgroundColor: "#000"
   },
   camera: {
-    minHeight: 356
+    width: "100%"
   },
-  cameraScrim: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: "rgba(0, 0, 0, 0.08)"
+  scanFrame: {
+    position: "absolute",
+    left: "10%",
+    right: "10%",
+    top: "32%",
+    height: "32%",
+    borderRadius: 18,
+    borderWidth: 3,
+    borderColor: "rgba(255, 255, 255, 0.9)"
   },
   overlayTop: {
     position: "absolute",
-    top: 14,
-    right: 14,
-    flexDirection: "row",
-    gap: 10
+    top: 12,
+    right: 12
   },
   overlayButton: {
     width: 48,
@@ -768,67 +864,82 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(17, 17, 17, 0.74)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.18)"
+    backgroundColor: "rgba(0, 0, 0, 0.55)"
   },
   overlayButtonOn: {
-    backgroundColor: colors.yellow,
-    borderColor: colors.yellow
-  },
-  overlayBottom: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 18,
-    alignItems: "center"
-  },
-  captureButton: {
-    width: 74,
-    height: 74,
-    borderRadius: 999,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.24)",
-    borderWidth: 4,
-    borderColor: colors.ink
-  },
-  scanFrame: {
-    position: "absolute",
-    left: 34,
-    right: 34,
-    top: 132,
-    height: 136,
-    borderRadius: 22,
-    borderWidth: 3,
-    borderColor: colors.orange,
-    backgroundColor: "rgba(255, 152, 36, 0.08)"
+    backgroundColor: colors.yellow
   },
   barcodeHint: {
     position: "absolute",
-    left: 18,
-    right: 18,
-    bottom: 18,
-    minHeight: 54,
-    borderRadius: 18,
+    left: 12,
+    right: 12,
+    bottom: 12,
+    minHeight: 46,
+    borderRadius: 999,
     flexDirection: "row",
+    gap: 9,
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    backgroundColor: "rgba(17, 17, 17, 0.76)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.16)"
+    backgroundColor: "rgba(0, 0, 0, 0.6)"
   },
   barcodeHintText: {
     color: colors.ink,
     fontSize: 14,
+    fontWeight: "800"
+  },
+  manualRow: {
+    flexDirection: "row",
+    gap: 10
+  },
+  manualInput: {
+    flex: 1,
+    minHeight: 54,
+    borderRadius: 18,
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.line,
+    color: colors.ink,
+    fontSize: 17,
+    fontWeight: "800",
+    paddingHorizontal: 16
+  },
+  manualButton: {
+    width: 54,
+    height: 54,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.purple
+  },
+  stepperRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10
+  },
+  stepperLabel: {
+    flex: 1,
+    color: colors.ink,
+    fontSize: 16,
     fontWeight: "900"
   },
-  notice: {
-    color: colors.muted,
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: "800",
+  stepperButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.line
+  },
+  stepperInput: {
+    width: 76,
+    minHeight: 48,
+    borderRadius: 15,
+    backgroundColor: colors.panel2,
+    color: colors.ink,
+    fontSize: 18,
+    fontWeight: "900",
     textAlign: "center"
   }
 });

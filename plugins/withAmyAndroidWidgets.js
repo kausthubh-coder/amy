@@ -293,7 +293,7 @@ const caloriesInfo = `
   android:resizeMode="horizontal|vertical"
   android:targetCellWidth="3"
   android:targetCellHeight="2"
-  android:updatePeriodMillis="0"
+  android:updatePeriodMillis="1800000"
   android:widgetCategory="home_screen" />
 `;
 
@@ -310,7 +310,7 @@ const todayInfo = `
   android:resizeMode="horizontal|vertical"
   android:targetCellWidth="4"
   android:targetCellHeight="2"
-  android:updatePeriodMillis="0"
+  android:updatePeriodMillis="1800000"
   android:widgetCategory="home_screen" />
 `;
 
@@ -321,6 +321,8 @@ package ${packageName};
 import android.content.Context;
 import org.json.JSONObject;
 import java.text.NumberFormat;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Locale;
 
 public class AmyWidgetState {
@@ -330,8 +332,8 @@ public class AmyWidgetState {
   public String dayLabel = "Today";
   public String note = "";
   public int caloriesConsumed = 0;
-  public int caloriesGoal = 2632;
-  public int caloriesRemaining = 2632;
+  public int caloriesGoal = 2000;
+  public int caloriesRemaining = 2000;
   public int carbs = 0;
   public int protein = 0;
   public int fat = 0;
@@ -351,6 +353,20 @@ public class AmyWidgetState {
       state.carbs = object.optInt("carbs", state.carbs);
       state.protein = object.optInt("protein", state.protein);
       state.fat = object.optInt("fat", state.fat);
+
+      // The app only pushes state while it is open. Once the date changes, yesterday's totals
+      // must not be shown as today's, so the widget resets itself until the next sync.
+      String today = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
+      String stateDay = object.optString("day", today);
+      if (!today.equals(stateDay)) {
+        state.dayLabel = new SimpleDateFormat("EEE", Locale.getDefault()).format(new Date());
+        state.note = "";
+        state.caloriesConsumed = 0;
+        state.caloriesRemaining = state.caloriesGoal;
+        state.carbs = 0;
+        state.protein = 0;
+        state.fat = 0;
+      }
     } catch (Exception ignored) {
     }
 
@@ -571,10 +587,15 @@ function patchMainApplication(filePath) {
   if (!fs.existsSync(filePath)) return;
   let contents = fs.readFileSync(filePath, "utf8");
   if (contents.includes("AmyWidgetPackage()")) return;
-  contents = contents.replace(
-    "          // add(MyReactNativePackage())",
-    "          // add(MyReactNativePackage())\n          add(AmyWidgetPackage())"
-  );
+  const anchor = "// add(MyReactNativePackage())";
+  if (!contents.includes(anchor)) {
+    // Fail the prebuild loudly: without this registration the widgets build fine but never update.
+    throw new Error(
+      "withAmyAndroidWidgets: could not find the package list anchor in MainApplication.kt. " +
+        "The Expo template changed; update patchMainApplication in plugins/withAmyAndroidWidgets.js."
+    );
+  }
+  contents = contents.replace(anchor, anchor + "\n          add(AmyWidgetPackage())");
   fs.writeFileSync(filePath, contents);
 }
 
@@ -617,4 +638,4 @@ function withAmyAndroidWidgets(config) {
   ]);
 }
 
-module.exports = createRunOncePlugin(withAmyAndroidWidgets, "with-amy-android-widgets", "1.0.0");
+module.exports = createRunOncePlugin(withAmyAndroidWidgets, "with-amy-android-widgets", "1.1.0");

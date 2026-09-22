@@ -23,8 +23,9 @@ export function InteractivePressable({ children, style, onPress, feedbackKind = 
     Animated.spring(scale, { toValue: 1, useNativeDriver, speed: 26, bounciness: 8 }).start();
   };
 
-  const handlePress = async (event: GestureResponderEvent) => {
-    if (!disabled) await feedback(sound ? feedbackKind : "tap");
+  const handlePress = (event: GestureResponderEvent) => {
+    // Haptics are fire-and-forget so the action never waits on the vibration motor.
+    if (!disabled) void feedback(sound ? feedbackKind : "tap");
     onPress?.(event);
   };
 

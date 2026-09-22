@@ -19,6 +19,14 @@ export type FoodPortion = {
 
 export type FoodSource = "ai_text" | "ai_photo" | "label_ocr" | "open_food_facts" | "saved_meal" | "manual" | "local_fallback";
 
+export type FoodItem = {
+  title: string;
+  servingLabel: string;
+  grams?: number;
+  macros: MacroTotals;
+  confidence: number;
+};
+
 export type FoodEntry = {
   id: string;
   day: string;
@@ -32,6 +40,9 @@ export type FoodEntry = {
   portion?: FoodPortion;
   barcode?: string;
   imageUri?: string;
+  items?: FoodItem[];
+  assumptions?: string;
+  userEdited?: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -49,6 +60,8 @@ export type FoodDraft = {
   portion?: FoodPortion;
   barcode?: string;
   imageUri?: string;
+  items?: FoodItem[];
+  assumptions?: string;
   createdAt: string;
 };
 
@@ -60,6 +73,18 @@ export type SavedMeal = {
   portion?: FoodPortion;
   lastLoggedAt?: string;
   createdAt: string;
+};
+
+// What the user last confirmed for a given log line, so repeat foods skip the network.
+export type FoodCorrection = {
+  key: string;
+  title: string;
+  servingLabel: string;
+  macros: MacroTotals;
+  portion?: FoodPortion;
+  items?: FoodItem[];
+  uses: number;
+  updatedAt: string;
 };
 
 export type WeightLog = {
@@ -80,9 +105,11 @@ export type GoalProfile = {
   fatTarget: number;
 };
 
+export type CalorieBias = "under_more" | "under" | "balanced" | "over" | "over_more";
+
 export type AppSettings = {
   onboardingDone: boolean;
-  calorieBias: "under_more" | "under" | "balanced" | "over" | "over_more";
+  calorieBias: CalorieBias;
   appearance: "system" | "dark" | "light";
   locationForRestaurants: boolean;
   reminders: boolean;
@@ -109,6 +136,7 @@ export type AmyLocalData = {
   weightLogs: WeightLog[];
   dayNotes: DayNote[];
   streakRepairs: string[];
+  corrections: FoodCorrection[];
   updatedAt: string;
 };
 
