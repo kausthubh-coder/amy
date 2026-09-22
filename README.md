@@ -51,7 +51,7 @@ It is not a good fit yet if you need a polished commercial diet platform, verifi
 | Area | Status |
 | --- | --- |
 | Android APK | Available from GitHub Releases |
-| Current version | `1.0.10` |
+| Current version | `1.0.11` |
 | Android package | `com.kaust.amy` |
 | Minimum Android version | Android 7.0 / API 24 |
 | Data model | Local app storage with JSON export/import |

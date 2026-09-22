@@ -1,6 +1,6 @@
 {
   "name": "amy-calorie-tracker",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Android-first calorie tracking built around fast line-by-line meal logging.",
   "license": "GPL-3.0-or-later",
   "private": true,

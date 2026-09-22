@@ -37,12 +37,27 @@ function parseOrThrow(key: string, value: string): unknown {
 
 async function loadSharded(metaText: string): Promise<AmyLocalData> {
   const meta = parseOrThrow(META_KEY, metaText);
-  const monthNames = isRecord(meta) && Array.isArray(meta.months) ? meta.months.filter((item): item is string => typeof item === "string") : [];
+  if (
+    !isRecord(meta) || meta.kind !== "amy-local-data" || !isRecord(meta.goal) || !isRecord(meta.settings) ||
+    !Array.isArray(meta.drafts) || !Array.isArray(meta.savedMeals) || !Array.isArray(meta.weightLogs) ||
+    !Array.isArray(meta.streakRepairs) || !Array.isArray(meta.corrections) ||
+    !Array.isArray(meta.months) || !meta.months.every((month) => typeof month === "string" && /^(?:\d{4}-\d{2}|undated)$/.test(month))
+  ) {
+    throw new StorageLoadError("The saved diary index is damaged and could not be read.");
+  }
+  const monthNames: string[] = meta.months;
   const pairs = monthNames.length ? await AsyncStorage.multiGet(monthNames.map((month) => `${MONTH_PREFIX}${month}`)) : [];
-  const months = pairs.map(([key, value]) => {
-    if (value == null) return {};
+  const rows = new Map(pairs);
+  const months = monthNames.map((month) => {
+    const key = `${MONTH_PREFIX}${month}`;
+    const value = rows.get(key);
+    if (value == null) throw new StorageLoadError(`Saved data under ${key} is missing. Nothing has been overwritten.`);
+    const shard = parseOrThrow(key, value);
+    if (!isRecord(shard) || !Array.isArray(shard.entries) || !Array.isArray(shard.dayNotes)) {
+      throw new StorageLoadError(`Saved data under ${key} is damaged and could not be read.`);
+    }
     written.set(key, value);
-    return parseOrThrow(key, value);
+    return shard;
   });
   written.set(META_KEY, metaText);
   return joinShards(meta, months).data;
@@ -54,18 +69,27 @@ async function loadSharded(metaText: string): Promise<AmyLocalData> {
  */
 export async function loadLocalData(): Promise<AmyLocalData> {
   const metaText = await AsyncStorage.getItem(META_KEY);
-  if (metaText) return loadSharded(metaText);
+  if (metaText !== null) return loadSharded(metaText);
 
   const legacy = await AsyncStorage.getItem(LEGACY_KEY);
-  if (legacy) {
-    const migrated = migrateLocalData(parseOrThrow(LEGACY_KEY, legacy));
-    await saveLocalData(migrated);
+  if (legacy !== null) {
+    const raw = parseOrThrow(LEGACY_KEY, legacy);
+    if (
+      !isRecord(raw) || raw.kind !== "amy-local-data" || !isRecord(raw.goal) || !isRecord(raw.settings) ||
+      !Array.isArray(raw.entries) || !Array.isArray(raw.dayNotes)
+    ) {
+      throw new StorageLoadError("The old diary is damaged and could not be migrated. It has not been deleted.");
+    }
+    const migrated = migrateLocalData(raw);
+    if (!(await saveLocalData(migrated))) {
+      throw new StorageLoadError("The old diary could not be copied to the new storage layout. It has not been deleted.");
+    }
     await AsyncStorage.removeItem(LEGACY_KEY);
     return migrated;
   }
 
   const fresh = seedLocalData();
-  await saveLocalData(fresh);
+  if (!(await saveLocalData(fresh))) throw new StorageLoadError("Amy could not save a new diary. Free up storage and try again.");
   return fresh;
 }
 
@@ -92,7 +116,7 @@ async function writeShards(data: AmyLocalData): Promise<void> {
 type SaveListener = (error: Error | null) => void;
 const saveListeners = new Set<SaveListener>();
 let pending: AmyLocalData | null = null;
-let flushing: Promise<void> | null = null;
+let flushing: Promise<boolean> | null = null;
 
 export function onSaveResult(listener: SaveListener) {
   saveListeners.add(listener);
@@ -101,7 +125,8 @@ export function onSaveResult(listener: SaveListener) {
   };
 }
 
-async function flush(): Promise<void> {
+async function flush(): Promise<boolean> {
+  let saved = true;
   while (pending) {
     const data = pending;
     pending = null;
@@ -109,15 +134,17 @@ async function flush(): Promise<void> {
       await writeShards(data);
       saveListeners.forEach((listener) => listener(null));
     } catch (error) {
+      saved = false;
       const failure = error instanceof Error ? error : new Error("Saving failed.");
       // Failures surface through listeners (the UI shows a banner); the next edit retries the save.
       saveListeners.forEach((listener) => listener(failure));
     }
   }
+  return saved;
 }
 
 /** Queues a save. Writes are serialized and coalesced, so rapid edits only persist the latest state. */
-export function saveLocalData(data: AmyLocalData): Promise<void> {
+export function saveLocalData(data: AmyLocalData): Promise<boolean> {
   pending = data;
   if (!flushing) {
     flushing = flush().finally(() => {
@@ -138,13 +165,23 @@ export async function readRawStorage(): Promise<string> {
 export async function quarantineAndReset(): Promise<AmyLocalData> {
   const keys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith("@amy/") && !key.startsWith(QUARANTINE_PREFIX));
   const pairs = await AsyncStorage.multiGet(keys);
+  const originals = new Map(pairs);
+  if (keys.some((key) => originals.get(key) == null)) {
+    throw new StorageLoadError("Amy could not read every original record, so the diary was left in place.");
+  }
   const stamp = Date.now().toString(36);
-  const moved = pairs.filter((pair): pair is [string, string] => pair[1] != null).map(([key, value]): [string, string] => [`${QUARANTINE_PREFIX}${stamp}/${key}`, value]);
-  if (moved.length) await AsyncStorage.multiSet(moved).catch(() => undefined);
+  const moved = keys.map((key): [string, string] => [`${QUARANTINE_PREFIX}${stamp}/${key}`, originals.get(key)!]);
+  if (moved.length) {
+    await AsyncStorage.multiSet(moved);
+    const copies = new Map(await AsyncStorage.multiGet(moved.map(([key]) => key)));
+    if (moved.some(([key, value]) => copies.get(key) !== value)) {
+      throw new StorageLoadError("Amy could not verify the backup copy, so the original diary was left in place.");
+    }
+  }
   await AsyncStorage.multiRemove(keys);
   written.clear();
   const fresh = seedLocalData();
-  await saveLocalData(fresh);
+  if (!(await saveLocalData(fresh))) throw new StorageLoadError("The old diary was quarantined, but Amy could not save a new one. Free up storage and try again.");
   return fresh;
 }
 

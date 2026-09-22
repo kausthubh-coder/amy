@@ -1,6 +1,6 @@
 # Amy Release Process
 
-Last updated: 2026-08-24
+Last updated: 2026-09-22
 
 This is the repeatable process for producing public Amy Android releases, including the **arm64-v8a** APK that IzzyOnDroid should consume.
 
@@ -10,12 +10,12 @@ Every release should keep these values aligned:
 
 | Surface | File or location | Current value |
 | --- | --- | --- |
-| App version | `package.json` | `1.0.10` |
-| Expo version | `app.json` | `1.0.10` |
+| App version | `package.json` | `1.0.11` |
+| Expo version | `app.json` | `1.0.11` |
 | Android `versionCode` | `app.json` | `12` |
 | Android package | `app.json` | `com.kaust.amy` |
 | Fastlane changelog | `fastlane/metadata/android/en-US/changelogs/12.txt` | versionCode `12` |
-| Git tag | Git/GitHub | `v1.0.10` |
+| Git tag | Git/GitHub | `v1.0.11` |
 | Release channel | GitHub Releases | `https://github.com/kausthubh-coder/amy/releases/latest` |
 | Izzy artifact | GitHub Release asset | `amy-<version>-arm64-v8a-release.apk` |
 
@@ -30,7 +30,7 @@ For a new release:
 7. Commit the source changes.
 8. Tag the release commit as `vX.Y.Z`.
 
-v1.0.9 was published as a **debug-signed** universal APK. **1.0.10** is the first public APK that uses the maintainer release key and the arm64 split. Keep `versionName` / `versionCode` aligned with that tagged APK so catalog metadata stays accurate.
+v1.0.9 was published as a **debug-signed** universal APK. **1.0.10** is the first public APK that uses the maintainer release key and the arm64 split. EAS remote versioning assigned build 11 to 1.0.10 and will assign build 12 to 1.0.11; `app.json` keeps 12 for local metadata. Keep the APK's actual `versionName` / `versionCode` aligned with the tagged release and Fastlane changelog.
 
 ## Standard Verification
 
@@ -121,7 +121,7 @@ android/app/build/outputs/apk/release/app-x86-release.apk
 android/app/build/outputs/apk/release/app-x86_64-release.apk
 ```
 
-Rename the arm64 file before upload, for example `amy-1.0.10-arm64-v8a-release.apk`. Do not attach the universal/fat APK; v1.0.9 was ~98MB because it embedded every ABI.
+Rename the arm64 file before upload, for example `amy-1.0.11-arm64-v8a-release.apk`. Do not attach the universal/fat APK; v1.0.9 was ~98MB because it embedded every ABI.
 
 `npm run build:local:android` still builds every ABI split. Use `build:local:android:arm64` when you only need the Izzy artifact.
 
@@ -150,7 +150,7 @@ Before using EAS for public releases, confirm:
 After building, verify metadata and checksums before publishing.
 
 ```sh
-APK=builds/amy-1.0.10-arm64-v8a-release.apk
+APK=builds/amy-1.0.11-arm64-v8a-release.apk
 aapt2 dump badging "$APK"
 apksigner verify --print-certs "$APK"
 shasum -a 256 "$APK"
