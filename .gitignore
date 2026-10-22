@@ -17,3 +17,6 @@ android-*.png
 *.keystore
 keystore.properties
 amy-implementation-plan.html
+
+# Verification runs (see .agents/skills/verify-amy)
+/.artifacts/verify/
