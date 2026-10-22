@@ -1,7 +1,7 @@
 import { BarcodeScanningResult, CameraView, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Platform, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { AccessibilityInfo, ActivityIndicator, Image, Platform, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { Barcode, Camera, Check, Flashlight, Image as ImageIcon, KeyRound, Minus, Plus, RotateCcw, Search, Sparkles, X } from "lucide-react-native";
 
 import { AgentError } from "../agent/client";
@@ -116,13 +116,14 @@ export function CaptureModal({
     lookupInFlightRef.current = true;
     setBusy(true);
     setNotice("");
-    setProgress(`Looking up ${cleanCode}...`);
+    setProgress(`Looking up ${cleanCode}…`);
     try {
       const result = await lookupOpenFoodFactsProduct(cleanCode, selectedDay);
       if (result.status === "found") {
         void feedback("success");
         setProduct(result.draft);
         setServings(result.draft.portion?.unit === "g" ? String(result.draft.portion.amount) : "1");
+        AccessibilityInfo.announceForAccessibility?.(`Found ${result.draft.title}, ${result.draft.macros.calories} calories per ${result.draft.servingLabel}`);
       } else {
         failedCodesRef.current.set(cleanCode, Date.now());
         void feedback("warning");
@@ -233,10 +234,12 @@ export function CaptureModal({
     try {
       setBusy(true);
       setNotice("");
-      setProgress(agentImages.length > 1 ? `Preparing ${agentImages.length} photos...` : "Preparing photo...");
-      const dataUrls = await Promise.all(agentImages.map(prepareAgentImage));
+      setProgress(agentImages.length > 1 ? `Preparing ${agentImages.length} photos…` : "Preparing photo…");
+      // One photo at a time: six full-size decodes at once can exhaust memory on a mid-range phone.
+      const dataUrls: string[] = [];
+      for (const image of agentImages) dataUrls.push(await prepareAgentImage(image));
       const location = data.settings.locationForRestaurants && imageMode === "photo" ? await getLocationContext() : {};
-      setProgress(imageMode === "label" ? "Reading the label..." : "Looking at your meal...");
+      setProgress(imageMode === "label" ? "Reading the label…" : "Looking at your meal…");
       const parts = await estimateImages(
         { dataUrls, mode: imageMode, note },
         { apiKey: data.settings.openRouterKey, model: data.settings.openRouterModel, bias: data.settings.calorieBias },
@@ -413,7 +416,11 @@ export function CaptureModal({
               <Text style={styles.primaryText}>Log {totals.calories.toLocaleString()} cal</Text>
             </InteractivePressable>
           </View>
-          {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+          {notice ? (
+            <Text accessibilityLiveRegion="polite" style={styles.notice}>
+              {notice}
+            </Text>
+          ) : null}
         </View>
       );
     }
@@ -435,7 +442,7 @@ export function CaptureModal({
           <View style={styles.buttonRow}>
             <InteractivePressable
               accessibilityRole="button"
-              accessibilityLabel={isLabel ? "Take a nutrition label photo" : "Take a meal photo"}
+              accessibilityLabel={isLabel ? "Camera, take a nutrition label photo" : "Camera, take a meal photo"}
               accessibilityHint="Opens the camera."
               onPress={takeAgentPhoto}
               disabled={busy || agentImages.length >= MAX_PHOTOS}
@@ -446,7 +453,7 @@ export function CaptureModal({
             </InteractivePressable>
             <InteractivePressable
               accessibilityRole="button"
-              accessibilityLabel={isLabel ? "Choose nutrition label photos" : "Choose meal photos"}
+              accessibilityLabel={isLabel ? "Photos, choose nutrition label photos" : "Photos, choose meal photos"}
               accessibilityHint="Opens your photo library."
               onPress={pickAgentImages}
               disabled={busy || agentImages.length >= MAX_PHOTOS}
@@ -497,10 +504,14 @@ export function CaptureModal({
           style={styles.primaryButton}
         >
           {busy ? <ActivityIndicator color={colors.ink} /> : <Sparkles size={20} color={colors.ink} strokeWidth={2.6} />}
-          <Text style={styles.primaryText}>{busy ? progress || "Working..." : isLabel ? "Read label" : "Estimate meal"}</Text>
+          <Text style={styles.primaryText}>{busy ? progress || "Working…" : isLabel ? "Read label" : "Estimate meal"}</Text>
         </InteractivePressable>
         {busy ? <Text style={styles.itemMeta}>This usually takes 5 to 20 seconds. You will review the result before it is logged.</Text> : null}
-        {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+        {notice ? (
+          <Text accessibilityLiveRegion="polite" style={styles.notice}>
+            {notice}
+          </Text>
+        ) : null}
       </View>
     );
   }
@@ -553,7 +564,11 @@ export function CaptureModal({
             <Text style={styles.primaryText}>Log {productMacros.calories.toLocaleString()} cal</Text>
           </InteractivePressable>
         </View>
-        {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+        {notice ? (
+          <Text accessibilityLiveRegion="polite" style={styles.notice}>
+            {notice}
+          </Text>
+        ) : null}
       </View>
     );
   }
@@ -620,7 +635,11 @@ export function CaptureModal({
           {busy && !canUseCamera ? <ActivityIndicator color={colors.ink} /> : <Search size={20} color={colors.ink} strokeWidth={2.6} />}
         </InteractivePressable>
       </View>
-      {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+      {notice ? (
+        <Text accessibilityLiveRegion="polite" style={styles.notice}>
+          {notice}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -725,8 +744,8 @@ const styles = StyleSheet.create({
     fontWeight: "900"
   },
   itemRemove: {
-    width: 44,
-    height: 44,
+    width: 48,
+    height: 48,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center"
@@ -761,7 +780,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 18,
-    backgroundColor: colors.purple
+    backgroundColor: colors.purpleButton
   },
   primaryText: {
     flexShrink: 1,
@@ -804,8 +823,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 4,
     right: 4,
-    width: 44,
-    height: 44,
+    width: 48,
+    height: 48,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
@@ -909,7 +928,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.purple
+    backgroundColor: colors.purpleButton
   },
   stepperRow: {
     flexDirection: "row",

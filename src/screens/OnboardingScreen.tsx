@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Image, Keyboard, KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { AccessibilityInfo, ActivityIndicator, Image, Keyboard, KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 
 import { checkOpenRouterKey } from "../agent/client";
 import { integrationConfig } from "../config/integrations";
@@ -8,11 +8,12 @@ import { DEFAULT_DAILY_CALORIES } from "../domain/seed";
 import { getLocationContext } from "../services/location";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
+import { parseUserNumber } from "../utils/number";
 import { InteractivePressable } from "../components/InteractivePressable";
 
 function parseNumber(value: string) {
-  const parsed = Number(value.replace(",", "."));
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  const parsed = parseUserNumber(value);
+  return parsed !== undefined && parsed > 0 ? parsed : 0;
 }
 
 export function OnboardingScreen() {
@@ -40,6 +41,7 @@ export function OnboardingScreen() {
     }
     setError("");
     setStep("ai");
+    AccessibilityInfo.announceForAccessibility?.("Step 2 of 2. Smart estimates.");
   };
 
   const testKey = async () => {
@@ -93,7 +95,7 @@ export function OnboardingScreen() {
         contentContainerStyle={[styles.content, keyboardOpen && styles.contentKeyboard]}
       >
         <View style={[styles.logoRow, keyboardOpen && styles.logoRowKeyboard]}>
-          <Image source={require("../../assets/icon-cat-alt.png")} style={[styles.logo, keyboardOpen && styles.logoKeyboard]} />
+          <Image source={require("../../assets/logo.png")} style={[styles.logo, keyboardOpen && styles.logoKeyboard]} />
         </View>
         <Text accessibilityRole="header" style={[styles.title, keyboardOpen && styles.titleKeyboard]}>
           {step === "targets" ? "Set your target" : "Smart estimates"}
@@ -151,7 +153,11 @@ export function OnboardingScreen() {
               </View>
             </View>
 
-            {error ? <Text style={styles.error}>{error}</Text> : null}
+            {error ? (
+              <Text accessibilityLiveRegion="polite" style={styles.error}>
+                {error}
+              </Text>
+            ) : null}
             <InteractivePressable accessibilityRole="button" feedbackKind="success" onPress={continueToAi} style={styles.cta}>
               <Text style={styles.ctaText}>Continue</Text>
             </InteractivePressable>
@@ -175,8 +181,8 @@ export function OnboardingScreen() {
               secureTextEntry
               autoCapitalize="none"
               autoCorrect={false}
-              placeholder="sk-or-... (optional)"
-              placeholderTextColor={colors.dim}
+              placeholder="sk-or-… (optional)"
+              placeholderTextColor={colors.muted}
               accessibilityLabel="OpenRouter API key, optional"
               style={styles.textInput}
             />
@@ -188,21 +194,25 @@ export function OnboardingScreen() {
                   autoCapitalize="none"
                   autoCorrect={false}
                   placeholder={integrationConfig.openRouter.defaultModel}
-                  placeholderTextColor={colors.dim}
+                  placeholderTextColor={colors.muted}
                   accessibilityLabel="AI model"
                   style={styles.textInput}
                 />
-                <InteractivePressable accessibilityRole="button" onPress={testKey} disabled={keyCheck.busy} style={styles.testRow}>
+                <InteractivePressable accessibilityRole="button" accessibilityState={{ busy: keyCheck.busy }} onPress={testKey} disabled={keyCheck.busy} style={styles.testRow}>
                   {keyCheck.busy ? <ActivityIndicator color={colors.ink} /> : null}
-                  <Text style={styles.testText}>{keyCheck.busy ? "Checking..." : "Test key"}</Text>
+                  <Text style={styles.testText}>{keyCheck.busy ? "Checking…" : "Test key"}</Text>
                 </InteractivePressable>
-                {keyCheck.message ? <Text style={[styles.hint, { color: keyCheck.ok ? colors.green : colors.pink }]}>{keyCheck.message}</Text> : null}
+                {keyCheck.message ? (
+                  <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: keyCheck.ok ? colors.green : colors.pinkText }]}>
+                    {keyCheck.message}
+                  </Text>
+                ) : null}
                 <View style={styles.switchRow}>
                   <View style={styles.switchCopy}>
                     <Text style={styles.switchTitle}>Use rough location</Text>
-                    <Text style={styles.hint}>{locationNote || "Shares only your city and country with estimates, for local restaurants and regional portions."}</Text>
+                    <Text style={styles.hint}>{locationNote || "Sends only your area (neighborhood, city, region, country) with estimates, never coordinates. Helps with local restaurants and regional portions."}</Text>
                   </View>
-                  <Switch value={useLocation} onValueChange={toggleLocation} trackColor={{ true: colors.green, false: colors.panel3 }} thumbColor={colors.ink} />
+                  <Switch accessibilityLabel="Use rough location" value={useLocation} onValueChange={toggleLocation} trackColor={{ true: colors.green, false: colors.track }} thumbColor={colors.ink} />
                 </View>
               </>
             ) : null}
@@ -277,7 +287,7 @@ const styles = StyleSheet.create({
   },
   error: {
     marginTop: 10,
-    color: colors.pink,
+    color: colors.pinkText,
     fontSize: 14,
     fontWeight: "800"
   },
@@ -387,6 +397,8 @@ const styles = StyleSheet.create({
     marginTop: 10,
     borderRadius: 17,
     backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.track,
     color: colors.ink,
     fontSize: 17,
     fontWeight: "800",
@@ -401,11 +413,11 @@ const styles = StyleSheet.create({
   },
   cta: {
     marginTop: 24,
-    height: 64,
+    minHeight: 64,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.purple
+    backgroundColor: colors.purpleButton
   },
   ctaRow: {
     marginTop: 16,
@@ -416,7 +428,7 @@ const styles = StyleSheet.create({
   ctaSmall: {
     flex: 1,
     minWidth: 0,
-    height: 58,
+    minHeight: 58,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center"
@@ -427,7 +439,7 @@ const styles = StyleSheet.create({
     borderColor: colors.line
   },
   startButton: {
-    backgroundColor: colors.purple
+    backgroundColor: colors.purpleButton
   },
   backText: {
     color: colors.ink,
