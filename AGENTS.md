@@ -4,7 +4,7 @@ Android-first calorie tracker: Expo SDK 56, React Native 0.85, TypeScript, no ba
 
 ## Before you change anything
 
-1. `npm ci`, then `npm test` (typecheck plus unit tests). It must be green before and after your change.
+1. In a new worktree, `.agents/skills/worktree-amy/SKILL.md` (`npm ci`, `npm test`, a port of its own). `npm test` must be green before and after your change.
 2. Read `.agents/skills/verify-amy/SKILL.md`. The app runs here as Expo web on a free port. There is no Android device or emulator, so camera, dictation, widgets, the soft keyboard and the splash stay unverified, and your report must say so.
 
 ## Where things are
@@ -28,3 +28,5 @@ Android-first calorie tracker: Expo SDK 56, React Native 0.85, TypeScript, no ba
 ## Done means
 
 `npm test` is green, the verify skill's journey for the feature you touched passes with evidence saved, and PRIVACY.md and this file are still true.
+
+Ship only with `.agents/skills/ship-amy/SKILL.md`, and only when the maintainer says ship or release: it bumps the version, merges the PR, builds the signed APK on EAS and publishes the GitHub release.
