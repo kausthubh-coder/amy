@@ -153,7 +153,7 @@ export function singleLineEdit(previousText: string, nextText: string): { index:
 
 /** "protein shake 160 cal" -> { title: "protein shake", calories: 160 }. Needs an explicit unit. */
 export function parseInlineCalories(line: string): { title: string; calories: number } | null {
-  const match = line.trim().match(/^(.*?[A-Za-zÀ-￿].*?)[\s,:\-–—=]+(\d{1,4}(?:[.,]\d+)?)\s*(?:k?cals?|calories)\.?$/i);
+  const match = line.trim().match(/^(.*?[A-Za-zÀ-￿].*?)[\s,:\-–—=]+(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d+)?|\d{1,4}(?:[.,]\d+)?)\s*(?:k?cals?|calories)\.?$/i);
   if (!match) return null;
   const title = (match[1] ?? "").trim();
   const parsed = parseUserNumber(match[2] ?? "");
@@ -161,6 +161,20 @@ export function parseInlineCalories(line: string): { title: string; calories: nu
   const calories = Math.round(parsed);
   if (!title || calories < 0 || calories > 9999) return null;
   return { title, calories };
+}
+
+/**
+ * The note after Undo of a removal. Untouched since the removal, the old text comes back exactly;
+ * typed since, the removed lines are appended so nothing typed is lost. Entries that belong to
+ * another day are returned as `elsewhere`: they go back to their own day, never into this note.
+ */
+export function undoRemovedLines(day: string, current: string, textBefore: string, textAfter: string, removed: FoodEntry[]) {
+  const here = removed.filter((entry) => entry.day === day);
+  const elsewhere = removed.filter((entry) => entry.day !== day);
+  if (!here.length) return { here, elsewhere, next: null };
+  const lines = here.map((entry) => (entry.rawInput?.trim() || entry.title).replace(/[\r\n]+/g, " "));
+  const next = current === textAfter ? textBefore : [current.trimEnd(), ...lines].filter(Boolean).join("\n");
+  return { here, elsewhere, next };
 }
 
 /** External text (deep links, widgets) must never auto-complete a line: collapse it to one line. */

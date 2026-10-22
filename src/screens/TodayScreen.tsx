@@ -31,7 +31,7 @@ import { shouldUseWebSearch } from "../agent/prompt";
 import { InteractivePressable } from "../components/InteractivePressable";
 import { MacroRing, ProgressBar } from "../components/NutritionBits";
 import { ToastViewport, useToast } from "../components/Toast";
-import { buildLineRows, entriesWithoutLines, isLoggableLine, LineRow as GenericLineRow, sanitizePrefill, singleLineEdit } from "../domain/lines";
+import { buildLineRows, entriesWithoutLines, isLoggableLine, LineRow as GenericLineRow, sanitizePrefill, singleLineEdit, undoRemovedLines } from "../domain/lines";
 import { totalsForDay } from "../domain/nutrition";
 import { createId } from "../domain/seed";
 import { currentStreakDays } from "../domain/streaks";
@@ -383,8 +383,8 @@ export function TodayScreen({
     };
   }, []);
 
+  // The attempt count survives a toast Retry, so a second failure still unlocks manual entry.
   const retryFailedLines = useCallback(() => {
-    errorCountRef.current = {};
     setLineStatuses((current) => {
       const next = Object.fromEntries(Object.entries(current).filter(([, status]) => status.phase !== "error" && !(status.phase === "needs-calories" && status.message)));
       return Object.keys(next).length === Object.keys(current).length ? current : next;
@@ -794,13 +794,9 @@ export function TodayScreen({
   // Undo puts the old text back only if nothing changed since; otherwise the lines are appended to
   // what is there now, so newer typing survives. Entries from another day go back to that day's note.
   const undoRemoval = (removed: FoodEntry[], textBefore: string, textAfter: string) => {
-    const day = selectedDayRef.current;
-    removed.filter((entry) => entry.day !== day).forEach((entry) => restoreEntry(entry));
-    const here = removed.filter((entry) => entry.day === day);
-    if (!here.length) return;
-    const current = workingTextRef.current;
-    const lines = here.map((entry) => (entry.rawInput?.trim() || entry.title).replace(/[\r\n]+/g, " "));
-    const next = current === textAfter ? textBefore : [current.trimEnd(), ...lines].filter(Boolean).join("\n");
+    const { here, elsewhere, next } = undoRemovedLines(selectedDayRef.current, workingTextRef.current, textBefore, textAfter, removed);
+    elsewhere.forEach((entry) => restoreEntry(entry));
+    if (next === null) return;
     here.forEach((entry) => restoreEntry(entry, next.trimEnd()));
     externalNoteRef.current = next.trimEnd();
     animateLayout();

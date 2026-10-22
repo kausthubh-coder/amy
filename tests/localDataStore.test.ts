@@ -129,10 +129,11 @@ test("the recovery copy of raw storage never contains the OpenRouter key", async
     const seed = seedLocalData();
     const { meta } = splitIntoShards({ ...seed, settings: { ...seed.settings, openRouterKey: "sk-or-v1-secret", androidExportDirectoryUri: "content://tree/Download" } });
     rows.set("@amy/v2/meta", JSON.stringify(meta));
-    // A damaged (truncated) record still gets the key blanked, by text replacement.
+    // A damaged (truncated) record still gets the key blanked, by text replacement, even when the cut lands inside the key.
     rows.set("@amy/quarantine/x/@amy/local-data", '{"kind":"amy-local-data","settings":{"openRouterKey":"sk-or-v1-secret"},');
+    rows.set("@amy/quarantine/y/@amy/local-data", `{"kind":"amy-local-data","settings":{"openRouterKey":"sk-or-v1-sec`);
     const raw = await readRawStorage();
-    assert.equal(raw.includes("sk-or-v1-secret"), false);
+    assert.equal(raw.includes("sk-or"), false);
     assert.equal(raw.includes("content://tree/Download"), false);
     // Everything else survives, so the copy is still a usable backup.
     assert.match(raw, /@amy\/v2\/meta/);

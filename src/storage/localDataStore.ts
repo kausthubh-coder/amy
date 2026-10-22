@@ -193,7 +193,7 @@ export function redactSecrets(value: string | null): string | null {
   } catch {
     // Damaged JSON: blank the key wherever it appears in the text instead.
   }
-  return value.replace(/"openRouterKey"\s*:\s*"(?:[^"\\]|\\.)*"/g, '"openRouterKey":""');
+  return value.replace(/"openRouterKey"\s*:\s*"(?:[^"\\]|\\.)*(?:"|$)/g, '"openRouterKey":""');
 }
 
 /** Everything Amy has stored, as text, for the recovery screen. The OpenRouter key is left out. */

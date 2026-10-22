@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildLineRows, entriesWithoutLines, isLoggableLine, isSmallLineEdit, parseInlineCalories, sanitizePrefill, singleLineEdit } from "../src/domain/lines";
+import { buildLineRows, entriesWithoutLines, isLoggableLine, isSmallLineEdit, parseInlineCalories, sanitizePrefill, singleLineEdit, undoRemovedLines } from "../src/domain/lines";
 import { FoodEntry } from "../src/domain/types";
 
 function entry(id: string, rawInput: string, createdAt: string): FoodEntry {
@@ -70,6 +70,7 @@ test("prefill text from deep links can never complete a line", () => {
 
 test("inline calories with a thousands separator are not read as one calorie", () => {
   assert.deepEqual(parseInlineCalories("big dinner 1,200 cal"), { title: "big dinner", calories: 1200 });
+  assert.deepEqual(parseInlineCalories("pie 1,234.5 cal"), { title: "pie", calories: 1235 });
   assert.deepEqual(parseInlineCalories("pizza 1.200 kcal"), { title: "pizza", calories: 1200 });
   assert.deepEqual(parseInlineCalories("yogurt 90,5 cal"), { title: "yogurt", calories: 91 });
 });
@@ -90,4 +91,17 @@ test("an entry with an empty raw line pairs by its title instead of hiding", () 
     entriesWithoutLines("", [ghost]).map((item) => item.id),
     ["g"]
   );
+});
+
+test("undo after a removal puts the lines back where the person expects", () => {
+  const removed = [entry("a", "protein shake", "2026-09-17T09:00:00Z")];
+  // Nothing typed since the removal: the note is exactly what it was.
+  assert.equal(undoRemovedLines("2026-09-17", "coffee\n", "coffee\nprotein shake\n", "coffee\n", removed).next, "coffee\nprotein shake\n");
+  // Typed since: the removed line is appended and the new typing stays.
+  assert.equal(undoRemovedLines("2026-09-17", "coffee\ntoast", "coffee\nprotein shake\n", "coffee\n", removed).next, "coffee\ntoast\nprotein shake");
+  // Removed while viewing another day: the entry goes back to its own day, not into this note.
+  const other = undoRemovedLines("2026-09-18", "salad", "coffee\nprotein shake\n", "coffee\n", removed);
+  assert.equal(other.next, null);
+  assert.deepEqual(other.here, []);
+  assert.deepEqual(other.elsewhere.map((item) => item.id), ["a"]);
 });
