@@ -27,7 +27,7 @@ export function RecoveryScreen({
   const copyRaw = async () => {
     try {
       await Clipboard.setStringAsync(await readRawStorage());
-      setStatus("Raw data copied. Paste it somewhere safe (notes, email) before doing anything else.");
+      setStatus("Raw data copied, without your OpenRouter key. Paste it into a notes app now, before doing anything else.");
     } catch {
       setStatus("Amy could not read the raw data either. Try restarting your phone, then open Amy again.");
     }
@@ -49,7 +49,9 @@ export function RecoveryScreen({
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>{title}</Text>
+      <Text accessibilityRole="header" style={styles.title}>
+        {title}
+      </Text>
       <Text style={styles.detail}>{detail}</Text>
       <View style={styles.actions}>
         <InteractivePressable accessibilityRole="button" onPress={onRetry} style={[styles.button, styles.primary]}>
@@ -64,7 +66,11 @@ export function RecoveryScreen({
           </InteractivePressable>
         ) : null}
       </View>
-      {status ? <Text style={styles.status}>{status}</Text> : null}
+      {status ? (
+        <Text accessibilityLiveRegion="assertive" style={styles.status}>
+          {status}
+        </Text>
+      ) : null}
     </ScrollView>
   );
 }
@@ -129,8 +135,8 @@ const styles = StyleSheet.create({
     borderColor: colors.line
   },
   primary: {
-    backgroundColor: colors.purple,
-    borderColor: colors.purple
+    backgroundColor: colors.purpleButton,
+    borderColor: colors.purpleButton
   },
   danger: {
     borderColor: colors.pink
@@ -146,7 +152,7 @@ const styles = StyleSheet.create({
     fontWeight: "900"
   },
   dangerText: {
-    color: colors.pink
+    color: colors.pinkText
   },
   status: {
     color: colors.muted,
