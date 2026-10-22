@@ -1,4 +1,3 @@
-import { File } from "expo-file-system";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { Platform } from "react-native";
 
@@ -29,11 +28,7 @@ export async function prepareAgentImage(image: AgentImageInput): Promise<string>
     const saved = await rendered.saveAsync({ compress: 0.72, format: SaveFormat.JPEG, base64: true });
     if (saved.base64) return `data:image/jpeg;base64,${saved.base64}`;
   } catch {
-    // Fall through to the original file when the manipulator cannot decode this image.
+    // The original file is never sent: gallery and camera files can carry EXIF location tags.
   }
-
-  if (image.dataUrl?.startsWith("data:image/")) return image.dataUrl;
-  const base64 = await new File(image.uri).base64();
-  const mime = image.uri.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
-  return `data:${mime};base64,${base64}`;
+  throw new Error("Amy could not prepare this photo. Take it again or choose a different one.");
 }
