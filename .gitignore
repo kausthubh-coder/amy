@@ -20,3 +20,4 @@ amy-implementation-plan.html
 
 # Verification runs (see .agents/skills/verify-amy)
 /.artifacts/verify/
+/.artifacts/release/
