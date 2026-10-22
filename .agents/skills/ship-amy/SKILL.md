@@ -35,7 +35,7 @@ gh pr checks <n> --watch
 gh pr merge <n> --merge
 ```
 
-Use a merge commit; every release so far points at one. Never `--delete-branch` from inside a worktree, and never `--admin` past a red check. Done when `gh pr view <n> --json state,mergeCommit` shows `MERGED` and a merge SHA. That SHA is the release commit.
+If the branch already has an open PR, skip `gh pr create` and use that number. Use a merge commit; every release so far points at one. Never `--delete-branch` from inside a worktree, and never `--admin` past a red check. Done when `gh pr view <n> --json state,mergeCommit` shows `MERGED` and a merge SHA. That SHA is the release commit.
 
 ## 3. Build
 
@@ -51,18 +51,22 @@ Run it in the background with a 40 minute budget; a build takes about 15 to 25 m
 
 ## 4. Verify the APK
 
+Use the build id from the build page URL the previous step printed, not the newest build in the list: a preview or another build can finish in between.
+
 ```sh
 mkdir -p .artifacts/release
-URL=$(npx eas-cli@latest build:list --platform android --limit 1 --non-interactive --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s)[0].artifacts.applicationArchiveUrl))')
+npx eas-cli@latest build:view <build id> --json > .artifacts/release/build.json
+node -e 'const b=require("./.artifacts/release/build.json");console.log(b.status,b.buildProfile,b.appVersion,b.appBuildVersion,b.gitCommitHash)'
+URL=$(node -e 'console.log(require("./.artifacts/release/build.json").artifacts.applicationArchiveUrl)')
 APK=.artifacts/release/amy-<version>-arm64-v8a-release.apk
 curl -sSL "$URL" -o "$APK"
 BT="$ANDROID_HOME/build-tools/36.0.0"
 "$BT/aapt2" dump badging "$APK" | grep -E "^package|sdkVersion|targetSdkVersion|native-code|application-debuggable"
-"$BT/apksigner.bat" verify --print-certs "$APK" | grep -i sha-256
+"$BT/apksigner.bat" verify --print-certs "$APK" | grep -i sha-256   # apksigner without .bat on macOS and Linux
 sha256sum "$APK"; stat -c %s "$APK"
 ```
 
-Expected: package `com.kaust.amy`, `versionName` and `versionCode` from step 1, `native-code: 'arm64-v8a'` only, no `application-debuggable`, and the signer certificate SHA-256 `c641dbac8fa970a899bc16171c8d99a9e56ff0b6f2e1329d05c6dc531c16cb92` (the key since 1.0.10; a different value means installed users cannot update, stop and tell the maintainer). `.artifacts/` is ignored by git; never commit an APK.
+Expected: `finished production <version> <versionCode> <merge sha>` from the first node line, then package `com.kaust.amy`, `versionName` and `versionCode` from step 1, `native-code: 'arm64-v8a'` only, no `application-debuggable`, and the signer certificate SHA-256 `c641dbac8fa970a899bc16171c8d99a9e56ff0b6f2e1329d05c6dc531c16cb92` (the key since 1.0.10; a different value means installed users cannot update, stop and tell the maintainer). `.artifacts/` is ignored by git; never commit an APK.
 
 ## 5. Release
 
