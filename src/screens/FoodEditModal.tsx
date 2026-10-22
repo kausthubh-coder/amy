@@ -8,19 +8,19 @@ import { ModalShell } from "../components/ModalShell";
 import { formatPortionLabel, macrosForPortion, portionGrams } from "../domain/nutrition";
 import { FoodEntry, FoodItem, FoodPortion, MacroTotals, PortionUnit } from "../domain/types";
 import { colors } from "../theme";
+import { parseUserNumber } from "../utils/number";
 
 export type FoodFields = Pick<FoodEntry, "title" | "servingLabel" | "macros" | "portion" | "items">;
 
 type EditableItem = { item: FoodItem; calories: string };
 
 function numeric(value: string, fallback: number) {
-  const parsed = Number(value.replace(/,/g, "."));
-  return Number.isFinite(parsed) ? parsed : fallback;
+  return parseUserNumber(value) ?? fallback;
 }
 
 function inputAmount(value: string): number | undefined {
-  const parsed = Number(value.replace(/,/g, "."));
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  const parsed = parseUserNumber(value);
+  return parsed !== undefined && parsed > 0 ? parsed : undefined;
 }
 
 function formatInputAmount(value: number | undefined) {
@@ -128,7 +128,9 @@ export function FoodEditModal({
     setItems([]);
     setPortionServings("");
     setPortionGramAmount("");
-  }, [entry, newLine]);
+    // Keyed on the id: numbers arriving for the open entry (a re-estimate) must not wipe what is being typed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry?.id, newLine]);
 
   const portion = entry?.portion;
   const hasItems = items.length > 0;
@@ -186,8 +188,11 @@ export function FoodEditModal({
 
     if (portion) {
       const unit: PortionUnit = activePortionUnit === "g" && canUseGrams ? "g" : "serving";
-      const fallbackAmount = unit === "g" ? (portionGrams(portion) ?? portion.amount) : (servingAmountForPortion(portion) ?? portion.amount);
-      const amount = inputAmount(unit === "g" ? portionGramAmount : portionServings) ?? fallbackAmount;
+      const storedAmount = unit === "g" ? portionGrams(portion) : servingAmountForPortion(portion);
+      const fallbackAmount = storedAmount ?? portion.amount;
+      const typed = unit === "g" ? portionGramAmount : portionServings;
+      // An untouched field keeps the exact stored amount; the field only shows it rounded to two decimals.
+      const amount = storedAmount !== undefined && typed === formatInputAmount(storedAmount) ? storedAmount : (inputAmount(typed) ?? fallbackAmount);
       let nextPortion: FoodPortion = { ...portion, amount, unit };
       // Typing calories directly re-bases the portion, so later scaling starts from the user's numbers.
       if (macrosDirty) nextPortion = { ...nextPortion, baseAmount: amount, baseUnit: unit, baseMacros: manualMacros(entry?.macros ?? empty) };
@@ -239,13 +244,13 @@ export function FoodEditModal({
 
           <View style={styles.card}>
             <Text style={styles.label}>Food</Text>
-            <TextInput value={title} onChangeText={setTitle} placeholder="Food name" placeholderTextColor={colors.dim} style={styles.input} accessibilityLabel="Food name" />
+            <TextInput value={title} onChangeText={setTitle} placeholder="Food name" placeholderTextColor={colors.muted} style={styles.input} accessibilityLabel="Food name" />
             {portion || hasItems ? null : (
               <TextInput
                 value={servingLabel}
                 onChangeText={setServingLabel}
                 placeholder="Serving size"
-                placeholderTextColor={colors.dim}
+                placeholderTextColor={colors.muted}
                 style={styles.input}
                 accessibilityLabel="Serving size"
               />
@@ -302,11 +307,14 @@ export function FoodEditModal({
                     onChangeText={changePortionServings}
                     editable={canUseServings}
                     keyboardType="decimal-pad"
+                    returnKeyType="done"
+                    onSubmitEditing={handleSave}
                     selectTextOnFocus
                     placeholder="1"
-                    placeholderTextColor={colors.dim}
+                    placeholderTextColor={colors.muted}
                     style={[styles.input, !canUseServings && styles.disabled]}
                     accessibilityLabel="Servings"
+                    accessibilityState={{ disabled: !canUseServings }}
                   />
                 </View>
                 <View style={styles.field}>
@@ -316,11 +324,14 @@ export function FoodEditModal({
                     onChangeText={changePortionGrams}
                     editable={canUseGrams}
                     keyboardType="decimal-pad"
+                    returnKeyType="done"
+                    onSubmitEditing={handleSave}
                     selectTextOnFocus
                     placeholder={canUseGrams ? "g" : "unknown"}
-                    placeholderTextColor={colors.dim}
+                    placeholderTextColor={colors.muted}
                     style={[styles.input, !canUseGrams && styles.disabled]}
                     accessibilityLabel="Grams"
+                    accessibilityState={{ disabled: !canUseGrams }}
                   />
                 </View>
               </View>
@@ -339,10 +350,12 @@ export function FoodEditModal({
                   value={calories}
                   onChangeText={changeMacro(setCalories)}
                   keyboardType="number-pad"
+                  returnKeyType="done"
+                  onSubmitEditing={handleSave}
                   selectTextOnFocus
                   autoFocus={creating}
                   placeholder="0"
-                  placeholderTextColor={colors.dim}
+                  placeholderTextColor={colors.muted}
                   style={styles.input}
                   accessibilityLabel="Calories"
                 />
@@ -361,9 +374,11 @@ export function FoodEditModal({
                       value={value}
                       onChangeText={changeMacro(setter)}
                       keyboardType="decimal-pad"
+                      returnKeyType="done"
+                      onSubmitEditing={handleSave}
                       selectTextOnFocus
                       placeholder="0"
-                      placeholderTextColor={colors.dim}
+                      placeholderTextColor={colors.muted}
                       style={styles.input}
                       accessibilityLabel={label}
                     />
@@ -374,7 +389,11 @@ export function FoodEditModal({
             </View>
           )}
 
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+          {error ? (
+            <Text accessibilityLiveRegion="polite" style={styles.error}>
+              {error}
+            </Text>
+          ) : null}
 
           {entry ? (
             <View style={styles.row}>
@@ -469,7 +488,7 @@ const styles = StyleSheet.create({
     gap: 6
   },
   fieldLabel: {
-    color: colors.dim,
+    color: colors.muted,
     fontSize: 12,
     fontWeight: "900"
   },
@@ -477,6 +496,8 @@ const styles = StyleSheet.create({
     minHeight: 54,
     borderRadius: 17,
     backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.track,
     color: colors.ink,
     fontSize: 17,
     fontWeight: "800",
@@ -492,7 +513,7 @@ const styles = StyleSheet.create({
     lineHeight: 19
   },
   error: {
-    color: colors.pink,
+    color: colors.pinkText,
     fontSize: 14,
     fontWeight: "800"
   },
@@ -511,15 +532,17 @@ const styles = StyleSheet.create({
     fontWeight: "800"
   },
   itemMeta: {
-    color: colors.dim,
+    color: colors.muted,
     fontSize: 12,
     fontWeight: "800"
   },
   itemInput: {
-    width: 84,
+    minWidth: 84,
     minHeight: 48,
     borderRadius: 15,
     backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.track,
     color: colors.ink,
     fontSize: 17,
     fontWeight: "900",
@@ -527,8 +550,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12
   },
   itemRemove: {
-    width: 44,
-    height: 44,
+    width: 48,
+    height: 48,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center"
@@ -552,7 +575,7 @@ const styles = StyleSheet.create({
   },
   action: {
     flex: 1,
-    height: 56,
+    minHeight: 56,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center"
@@ -563,10 +586,10 @@ const styles = StyleSheet.create({
     borderColor: colors.line
   },
   save: {
-    backgroundColor: colors.purple
+    backgroundColor: colors.purpleButton
   },
   removeText: {
-    color: colors.pink,
+    color: colors.pinkText,
     fontSize: 16,
     fontWeight: "900"
   },

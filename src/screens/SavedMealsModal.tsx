@@ -8,6 +8,7 @@ import { useToast } from "../components/Toast";
 import { targetsFromCalories } from "../domain/nutrition";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
+import { parseUserNumber } from "../utils/number";
 
 export function SavedMealsModal({ onDone }: { onDone: () => void }) {
   const { data, selectedDay, logSavedMeal, addSavedMeal, deleteSavedMeal, restoreSavedMeal } = useAppData();
@@ -28,7 +29,12 @@ export function SavedMealsModal({ onDone }: { onDone: () => void }) {
             <Text style={styles.mealTitle} numberOfLines={2}>
               {meal.title}
             </Text>
-            <Text style={styles.mealMeta}>🔥 {meal.macros.calories} · C {meal.macros.carbs} · P {meal.macros.protein} · F {meal.macros.fat}</Text>
+            <Text
+              accessibilityLabel={`${meal.macros.calories} calories, ${meal.macros.carbs} grams carbs, ${meal.macros.protein} grams protein, ${meal.macros.fat} grams fat`}
+              style={styles.mealMeta}
+            >
+              🔥 {meal.macros.calories} · C {meal.macros.carbs} · P {meal.macros.protein} · F {meal.macros.fat}
+            </Text>
           </View>
           <InteractivePressable
             accessibilityRole="button"
@@ -60,11 +66,20 @@ export function SavedMealsModal({ onDone }: { onDone: () => void }) {
 
       <View style={styles.form}>
         <Text style={styles.formTitle}>Create quick meal</Text>
-        <TextInput value={title} onChangeText={setTitle} placeholder="Meal name" placeholderTextColor={colors.dim} style={styles.input} />
-        <TextInput value={calories} onChangeText={setCalories} placeholder="Calories" placeholderTextColor={colors.dim} keyboardType="number-pad" style={styles.input} />
+        <TextInput value={title} onChangeText={setTitle} placeholder="Meal name" placeholderTextColor={colors.muted} accessibilityLabel="Meal name" style={styles.input} />
+        <TextInput
+          value={calories}
+          onChangeText={setCalories}
+          placeholder="Calories"
+          placeholderTextColor={colors.muted}
+          accessibilityLabel="Calories"
+          keyboardType="number-pad"
+          style={styles.input}
+        />
         <InteractivePressable
+          accessibilityRole="button"
           onPress={() => {
-            const cals = Math.round(Number(calories.replace(",", ".")) || 0);
+            const cals = Math.round(parseUserNumber(calories) ?? 0);
             if (!title.trim() || cals <= 0) {
               setError(!title.trim() ? "Give the meal a name." : "Enter the meal's calories.");
               return;
@@ -84,7 +99,11 @@ export function SavedMealsModal({ onDone }: { onDone: () => void }) {
         >
           <Text style={styles.createText}>Save meal</Text>
         </InteractivePressable>
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {error ? (
+          <Text accessibilityLiveRegion="polite" style={styles.error}>
+            {error}
+          </Text>
+        ) : null}
       </View>
     </View>
   );
@@ -102,13 +121,13 @@ const styles = StyleSheet.create({
     minWidth: 0
   },
   deleteButton: {
-    width: 44,
+    width: 48,
     height: 48,
     alignItems: "center",
     justifyContent: "center"
   },
   error: {
-    color: colors.pink,
+    color: colors.pinkText,
     fontSize: 14,
     fontWeight: "800"
   },
@@ -139,11 +158,11 @@ const styles = StyleSheet.create({
   },
   addButton: {
     minWidth: 78,
-    height: 48,
+    minHeight: 48,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.purple
+    backgroundColor: colors.purpleButton
   },
   addText: {
     color: colors.ink,
@@ -165,12 +184,14 @@ const styles = StyleSheet.create({
     minHeight: 52,
     borderRadius: 16,
     backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.track,
     color: colors.ink,
     fontSize: 17,
     paddingHorizontal: 14
   },
   createButton: {
-    height: 52,
+    minHeight: 52,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",

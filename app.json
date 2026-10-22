@@ -4,10 +4,11 @@
     "description": "Android-first calorie tracking built around fast line-by-line meal logging.",
     "slug": "amy-calorie-tracker",
     "scheme": "amy",
-    "version": "1.0.11",
+    "version": "1.0.12",
     "orientation": "portrait",
     "icon": "./assets/icon-cat-alt.png",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#111111",
     "githubUrl": "https://github.com/kausthubh-coder/amy",
     "ios": {
       "supportsTablet": false,
@@ -18,7 +19,7 @@
     },
     "android": {
       "package": "com.kaust.amy",
-      "versionCode": 12,
+      "versionCode": 13,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.CAMERA",
@@ -75,6 +76,17 @@
           "androidSpeechServicePackages": [
             "com.google.android.googlequicksearchbox"
           ]
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#111111",
+          "image": "./assets/logo.png",
+          "imageWidth": 160,
+          "dark": {
+            "backgroundColor": "#111111"
+          }
         }
       ]
     ],

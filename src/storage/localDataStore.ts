@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { AmyExportBundle, AmyLocalData } from "../domain/types";
 import { seedLocalData } from "../domain/seed";
-import { isRecord, joinShards, migrateLocalData, migrateWithReport, MigrationReport, SCHEMA_VERSION, splitIntoShards } from "./migrate";
+import { isRecord, joinShards, migrateLocalData, migrateWithReport, MigrationReport, MonthShard, SCHEMA_VERSION, splitIntoShards } from "./migrate";
 
 export { migrateLocalData } from "./migrate";
 
@@ -93,10 +93,30 @@ export async function loadLocalData(): Promise<AmyLocalData> {
   return fresh;
 }
 
+// The shard objects behind the last serialization. Untouched entries keep their identity across
+// commits, so a month whose records are all the same objects as last time is not stringified again.
+const serializedShards = new Map<string, MonthShard>();
+
+function sameShard(a: MonthShard, b: MonthShard) {
+  return a.entries.length === b.entries.length && a.dayNotes.length === b.dayNotes.length && a.entries.every((entry, index) => entry === b.entries[index]) && a.dayNotes.every((note, index) => note === b.dayNotes[index]);
+}
+
+function serializeShard(key: string, shard: MonthShard): string {
+  const previous = serializedShards.get(key);
+  const cached = written.get(key);
+  if (previous && cached !== undefined && sameShard(previous, shard)) return cached;
+  return JSON.stringify(shard);
+}
+
 async function writeShards(data: AmyLocalData): Promise<void> {
-  const { meta, months } = splitIntoShards({ ...data, updatedAt: nowIso() });
+  const { meta, months } = splitIntoShards(data);
   const next = new Map<string, string>();
-  Object.entries(months).forEach(([month, shard]) => next.set(`${MONTH_PREFIX}${month}`, JSON.stringify(shard)));
+  const shards = new Map<string, MonthShard>();
+  Object.entries(months).forEach(([month, shard]) => {
+    const key = `${MONTH_PREFIX}${month}`;
+    next.set(key, serializeShard(key, shard));
+    shards.set(key, shard);
+  });
 
   const changed: [string, string][] = [];
   next.forEach((value, key) => {
@@ -110,7 +130,11 @@ async function writeShards(data: AmyLocalData): Promise<void> {
   if (removed.length) await AsyncStorage.multiRemove(removed);
 
   changed.forEach(([key, value]) => written.set(key, value));
-  removed.forEach((key) => written.delete(key));
+  removed.forEach((key) => {
+    written.delete(key);
+    serializedShards.delete(key);
+  });
+  shards.forEach((shard, key) => serializedShards.set(key, shard));
 }
 
 type SaveListener = (error: Error | null) => void;
@@ -126,12 +150,14 @@ export function onSaveResult(listener: SaveListener) {
 }
 
 async function flush(): Promise<boolean> {
+  // Saves coalesce, so the last write holds the newest state; its outcome is the one callers get.
   let saved = true;
   while (pending) {
     const data = pending;
     pending = null;
     try {
       await writeShards(data);
+      saved = true;
       saveListeners.forEach((listener) => listener(null));
     } catch (error) {
       saved = false;
@@ -154,11 +180,27 @@ export function saveLocalData(data: AmyLocalData): Promise<boolean> {
   return flushing;
 }
 
-/** Everything Amy has stored, as text, for the recovery screen. */
+/** Blanks the OpenRouter key (and the Android folder grant) inside one stored record, for copies that leave the app. */
+export function redactSecrets(value: string | null): string | null {
+  if (value == null || !value.includes("openRouterKey")) return value;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (isRecord(parsed) && isRecord(parsed.settings)) {
+      parsed.settings.openRouterKey = "";
+      delete parsed.settings.androidExportDirectoryUri;
+      return JSON.stringify(parsed);
+    }
+  } catch {
+    // Damaged JSON: blank the key wherever it appears in the text instead.
+  }
+  return value.replace(/"openRouterKey"\s*:\s*"(?:[^"\\]|\\.)*(?:"|$)/g, '"openRouterKey":""');
+}
+
+/** Everything Amy has stored, as text, for the recovery screen. The OpenRouter key is left out. */
 export async function readRawStorage(): Promise<string> {
   const keys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith("@amy/"));
   const pairs = await AsyncStorage.multiGet(keys);
-  return JSON.stringify(Object.fromEntries(pairs), null, 2);
+  return JSON.stringify(Object.fromEntries(pairs.map(([key, value]) => [key, redactSecrets(value)])), null, 2);
 }
 
 /** Moves damaged records aside (never deletes them) and starts a fresh diary. */
@@ -180,6 +222,7 @@ export async function quarantineAndReset(): Promise<AmyLocalData> {
   }
   await AsyncStorage.multiRemove(keys);
   written.clear();
+  serializedShards.clear();
   const fresh = seedLocalData();
   if (!(await saveLocalData(fresh))) throw new StorageLoadError("The old diary was quarantined, but Amy could not save a new one. Free up storage and try again.");
   return fresh;
@@ -218,6 +261,10 @@ export function parseImportText(text: string): MigrationReport {
   }
   if (!isRecord(parsed) || parsed.kind !== "amy-local-export") {
     throw new Error("Import must be an Amy JSON export.");
+  }
+  // Without a data section the import would be an empty diary that sends the user back to onboarding.
+  if (!isRecord(parsed.data)) {
+    throw new Error("This file has no Amy data section. Use a full Amy JSON export.");
   }
   return migrateWithReport(parsed);
 }

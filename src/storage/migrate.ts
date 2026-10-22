@@ -1,4 +1,5 @@
 import { seedLocalData } from "../domain/seed";
+import { compareIso } from "../utils/number";
 import {
   AmyLocalData,
   AppSettings,
@@ -116,7 +117,8 @@ function sanitizeEntry(raw: unknown, now: string): FoodEntry | null {
   if (!isRecord(raw)) return null;
   const food = sanitizeFood(raw, now);
   if (!food) return null;
-  return { ...food, rawInput: str(raw.rawInput), userEdited: raw.userEdited === true ? true : undefined, updatedAt: isoOr(raw.updatedAt, food.createdAt) };
+  // An empty rawInput would pair with no line and could never be repaired, so it falls back to the title.
+  return { ...food, rawInput: str(raw.rawInput)?.trim() || undefined, userEdited: raw.userEdited === true ? true : undefined, updatedAt: isoOr(raw.updatedAt, food.createdAt) };
 }
 
 function sanitizeDraft(raw: unknown, now: string): FoodDraft | null {
@@ -238,7 +240,8 @@ export function migrateWithReport(input: unknown): MigrationReport {
     entries: uniqueBy(sanitizeList(raw.entries, fallback.entries, sanitizeEntry, now, report), (entry) => entry.id),
     drafts: uniqueBy(sanitizeList(raw.drafts, fallback.drafts, sanitizeDraft, now, report), (draft) => draft.id),
     savedMeals: uniqueBy(sanitizeList(raw.savedMeals, fallback.savedMeals, sanitizeSavedMeal, now, report), (meal) => meal.id),
-    weightLogs: uniqueBy(sanitizeList(raw.weightLogs, fallback.weightLogs, sanitizeWeightLog, now, report), (log) => log.id),
+    // Newest first, which is the order the app keeps and Settings displays.
+    weightLogs: uniqueBy(sanitizeList(raw.weightLogs, fallback.weightLogs, sanitizeWeightLog, now, report), (log) => log.id).sort((a, b) => compareIso(b.day, a.day)),
     dayNotes: uniqueBy(sanitizeList(raw.dayNotes, fallback.dayNotes, sanitizeDayNote, now, report), (note) => note.day),
     streakRepairs: Array.isArray(raw.streakRepairs) ? raw.streakRepairs.filter((item): item is string => typeof item === "string") : [],
     corrections: uniqueBy(sanitizeList(raw.corrections, [], sanitizeCorrection, now, report), (item) => item.key),
@@ -279,6 +282,6 @@ export function joinShards(meta: unknown, months: unknown[]): MigrationReport {
     if (Array.isArray(month.dayNotes)) dayNotes.push(...month.dayNotes);
   });
   const report = migrateWithReport({ ...base, entries, dayNotes });
-  report.data.entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  report.data.entries.sort((a, b) => compareIso(b.createdAt, a.createdAt));
   return report;
 }

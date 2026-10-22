@@ -1,6 +1,7 @@
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AccessibilityInfo,
   Animated,
   AppState,
   Dimensions,
@@ -30,11 +31,12 @@ import { shouldUseWebSearch } from "../agent/prompt";
 import { InteractivePressable } from "../components/InteractivePressable";
 import { MacroRing, ProgressBar } from "../components/NutritionBits";
 import { ToastViewport, useToast } from "../components/Toast";
-import { buildLineRows, entriesWithoutLines, isLoggableLine, LineRow as GenericLineRow, sanitizePrefill, singleLineEdit } from "../domain/lines";
+import { buildLineRows, entriesWithoutLines, isLoggableLine, LineRow as GenericLineRow, sanitizePrefill, singleLineEdit, undoRemovedLines } from "../domain/lines";
 import { totalsForDay } from "../domain/nutrition";
 import { createId } from "../domain/seed";
 import { currentStreakDays } from "../domain/streaks";
 import { FoodDraft, FoodEntry, FoodSource } from "../domain/types";
+import { prefersReducedMotion, useReducedMotion } from "../hooks/useReducedMotion";
 import { feedback } from "../services/feedback";
 import { getLocationContext } from "../services/location";
 import { useAppData } from "../store/AppDataContext";
@@ -60,8 +62,7 @@ const activePhaseText: Record<"estimating" | "searching", string> = {
 
 const animatedNativeDriver = Platform.OS !== "web";
 const NOTE_LINE_HEIGHT = 32;
-const CALORIE_HIT_TARGET = 44;
-const CALORIE_HIT_OFFSET = (CALORIE_HIT_TARGET - NOTE_LINE_HEIGHT) / 2;
+const CALORIE_HIT_TARGET = 48;
 const LINE_RAIL_WIDTH = 104;
 const NOTE_ROW_GAP = 10;
 const FLOATING_HEADER_HEIGHT = 52;
@@ -80,17 +81,29 @@ if (Platform.OS === "android") {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
 }
 
+// Short and ease-out: it runs when rows arrive from outside the editor, never on keystrokes.
 function animateLayout() {
-  if (Platform.OS === "web") return;
-  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+  if (Platform.OS === "web" || prefersReducedMotion()) return;
+  LayoutAnimation.configureNext(LayoutAnimation.create(150, LayoutAnimation.Types.easeOut, LayoutAnimation.Properties.opacity));
 }
 
 function isDaySwipeGesture(gesture: { dx: number; dy: number }) {
   return Math.abs(gesture.dx) > 24 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1;
 }
 
-function measuredLineHeight(lineCount: number) {
-  return Math.max(NOTE_LINE_HEIGHT, Math.ceil(lineCount) * NOTE_LINE_HEIGHT);
+// The heights the text really rendered at, so the rail follows the system font size.
+function measuredLineHeight(lines: TextLayoutEventData["lines"], lineHeight: number) {
+  const measured = lines.reduce((sum, line) => sum + (Number.isFinite(line.height) ? line.height : 0), 0);
+  return Math.max(lineHeight, Math.ceil(measured || (lines.length || 1) * lineHeight));
+}
+
+function announce(message: string) {
+  AccessibilityInfo.announceForAccessibility?.(message);
+}
+
+// Errors another attempt cannot fix: the line goes straight to manual entry and the toast offers Settings.
+function needsSettings(error: AgentError) {
+  return error.kind === "auth" || error.kind === "credits" || error.kind === "model" || error.kind === "no-key";
 }
 
 function deviceLocale() {
@@ -126,9 +139,14 @@ function isLowConfidence(entry: FoodEntry) {
 function PhaseIndicator({ label }: { label: string }) {
   const [dotCount, setDotCount] = useState(1);
   const opacity = useRef(new Animated.Value(0.65)).current;
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     const dotTimer = setInterval(() => setDotCount((count) => (count % 3) + 1), 280);
+    if (reducedMotion) {
+      opacity.setValue(1);
+      return () => clearInterval(dotTimer);
+    }
     const pulse = Animated.loop(
       Animated.sequence([
         Animated.timing(opacity, { toValue: 1, duration: 420, useNativeDriver: animatedNativeDriver }),
@@ -140,10 +158,10 @@ function PhaseIndicator({ label }: { label: string }) {
       clearInterval(dotTimer);
       pulse.stop();
     };
-  }, [opacity]);
+  }, [opacity, reducedMotion]);
 
   return (
-    <Animated.View accessibilityLabel={label} style={[styles.phasePill, { opacity }]}>
+    <Animated.View accessible accessibilityLabel={label} style={[styles.phasePill, { opacity }]}>
       <Text style={styles.linePhaseText}>
         {label}
         {".".repeat(dotCount)}
@@ -163,7 +181,7 @@ export function TodayScreen({
   dictationSignal?: number;
   prefillText?: string;
 }) {
-  const { data, today, selectedDay, saveError, shiftDay, goToToday, updateDayNote, addEntryFromDraft, updateEntry, deleteEntry, restoreEntry, rememberFood, forgetFood, addSavedMeal } =
+  const { data, today, selectedDay, generation, saveError, shiftDay, goToToday, updateDayNote, addEntryFromDraft, updateEntry, deleteEntry, restoreEntry, rememberFood, forgetFood, addSavedMeal } =
     useAppData();
   const { showToast } = useToast();
   const [workingText, setWorkingText] = useState("");
@@ -178,8 +196,11 @@ export function TodayScreen({
   const [manualLine, setManualLine] = useState<{ key: string; text: string } | null>(null);
   const [calorieOverlayVisible, setCalorieOverlayVisible] = useState(false);
   const [lineHeights, setLineHeights] = useState<Record<string, number>>({});
-  const [noteScrollY, setNoteScrollY] = useState(0);
+  // Scroll offset lives in an Animated value: the rail follows the note without re-rendering the screen.
+  const noteScrollY = useRef(new Animated.Value(0)).current;
   const inputRef = useRef<TextInput>(null);
+  const errorCountRef = useRef<Record<string, number>>({});
+  const previousDayRef = useRef<string | null>(null);
   const lastPrefillRef = useRef("");
   const lastDictationSignalRef = useRef(0);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -199,7 +220,7 @@ export function TodayScreen({
   const externalNoteRef = useRef("");
   const dataRef = useRef(data);
   const insets = useSafeAreaInsets();
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, fontScale } = useWindowDimensions();
 
   const note = data?.dayNotes.find((item) => item.day === selectedDay)?.text ?? "";
   const entries = useMemo(() => data?.entries.filter((entry) => entry.day === selectedDay) ?? [], [data?.entries, selectedDay]);
@@ -220,7 +241,12 @@ export function TodayScreen({
       : 0;
   const dockBottom = keyboardDockOffset || Math.max(insets.bottom + 10, 18);
   const dockReserve = dockBottom + 92;
-  const measuredTextWidth = Math.max(80, windowWidth - 36 - LINE_RAIL_WIDTH - NOTE_ROW_GAP);
+  // The note text scales with the system font; the rail's row pitch and hit boxes scale with it.
+  const noteLineHeight = Math.round(NOTE_LINE_HEIGHT * fontScale);
+  const railWidth = Math.round(LINE_RAIL_WIDTH * Math.min(fontScale, 1.3));
+  const calorieHitHeight = Math.max(CALORIE_HIT_TARGET, noteLineHeight);
+  const calorieHitStyle = { top: -(calorieHitHeight - noteLineHeight) / 2, height: calorieHitHeight };
+  const measuredTextWidth = Math.max(80, windowWidth - 36 - railWidth - NOTE_ROW_GAP);
 
   workingTextRef.current = workingText;
   commitLastRef.current = commitLast;
@@ -241,6 +267,13 @@ export function TodayScreen({
   // Day change: load that day's note. Entries that somehow lost their line get one back, so
   // nothing can count toward the total while being invisible in the log.
   useEffect(() => {
+    // Whatever was being typed on the old day is saved first. Swipes and taps already did this;
+    // the automatic midnight rollover did not.
+    const previousDay = previousDayRef.current;
+    previousDayRef.current = selectedDay;
+    if (previousDay && previousDay !== selectedDay && workingTextRef.current.trimEnd() !== externalNoteRef.current) {
+      updateDayNote(previousDay, workingTextRef.current.trimEnd());
+    }
     const dayEntries = dataRef.current?.entries.filter((entry) => entry.day === selectedDay) ?? [];
     const orphans = entriesWithoutLines(note, dayEntries);
     const repaired = orphans.length ? [note.trimEnd(), ...orphans.map((entry) => (entry.rawInput ?? entry.title).replace(/[\r\n]+/g, " "))].filter(Boolean).join("\n") : note;
@@ -250,13 +283,15 @@ export function TodayScreen({
     setCommitLast(Boolean(repaired.trim()));
     setLineStatuses({});
     setLineHeights({});
-    setNoteScrollY(0);
+    noteScrollY.setValue(0);
     setEditingEntryId(null);
     setManualLine(null);
     setCalorieOverlayVisible(false);
     pendingReestimateRef.current.clear();
+    errorCountRef.current = {};
+    // `generation` changes when an import or a reset replaces the diary underneath the editor.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDay]);
+  }, [selectedDay, generation]);
 
   // Lines appended outside the editor (photo, barcode, saved meal) merge into what is being typed.
   useEffect(() => {
@@ -290,10 +325,13 @@ export function TodayScreen({
     setLineHeights(prune);
   }, [workingText]);
 
-  const rememberLineHeight = useCallback((key: string, event: NativeSyntheticEvent<TextLayoutEventData>) => {
-    const nextHeight = measuredLineHeight(event.nativeEvent.lines.length || 1);
-    setLineHeights((current) => (current[key] === nextHeight ? current : { ...current, [key]: nextHeight }));
-  }, []);
+  const rememberLineHeight = useCallback(
+    (key: string, event: NativeSyntheticEvent<TextLayoutEventData>) => {
+      const nextHeight = measuredLineHeight(event.nativeEvent.lines, noteLineHeight);
+      setLineHeights((current) => (current[key] === nextHeight ? current : { ...current, [key]: nextHeight }));
+    },
+    [noteLineHeight]
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -345,16 +383,38 @@ export function TodayScreen({
     };
   }, []);
 
+  // The attempt count survives a toast Retry, so a second failure still unlocks manual entry.
+  const retryFailedLines = useCallback(() => {
+    setLineStatuses((current) => {
+      const next = Object.fromEntries(Object.entries(current).filter(([, status]) => status.phase !== "error" && !(status.phase === "needs-calories" && status.message)));
+      return Object.keys(next).length === Object.keys(current).length ? current : next;
+    });
+    setRetryTick((tick) => tick + 1);
+  }, []);
+
   const reportAgentError = useCallback(
     (error: AgentError) => {
+      const settings = needsSettings(error);
       showToast({
         kind: "error",
         message: error.message,
-        actionLabel: error.kind === "auth" || error.kind === "credits" || error.kind === "model" ? "Settings" : undefined,
-        onAction: () => openModal("settings")
+        actionLabel: settings ? "Settings" : "Retry",
+        onAction: settings ? () => openModal("settings") : retryFailedLines
       });
     },
-    [openModal, showToast]
+    [openModal, retryFailedLines, showToast]
+  );
+
+  // A failed line shows Retry once. A second failure, or an error a retry cannot fix, shows "+ cal"
+  // so the line can always be finished by hand.
+  const failLine = useCallback(
+    (row: LineRow, runId: number, message: string, manualNow: boolean) => {
+      const attempts = (errorCountRef.current[row.key] ?? 0) + 1;
+      errorCountRef.current[row.key] = attempts;
+      setStatus(row.key, { phase: manualNow || attempts >= 2 ? "needs-calories" : "error", runId, message });
+      announce(`${row.text.trim()}: ${message}`);
+    },
+    [setStatus]
   );
 
   const analyzeRows = useCallback(
@@ -375,6 +435,7 @@ export function TodayScreen({
         const local = findLocalMatch(text, current.corrections, current.savedMeals);
         if (local) {
           addEntryFromDraft(draftFromParts(local, text, day, local.source, { confidence: local.confidence, sourceLabel: local.sourceLabel }), text, { appendNoteLine: false });
+          announce(`${text}: ${local.macros.calories.toLocaleString()} calories`);
           void feedback("log");
           return;
         }
@@ -402,10 +463,11 @@ export function TodayScreen({
             const result = results[index];
             const text = row.text.trim();
             if (!result || result.status === "error") {
-              setStatus(row.key, { phase: "error", runId, message: result?.error.message ?? "No estimate came back for this line." });
+              failLine(row, runId, result?.error.message ?? "No estimate came back for this line.", false);
             } else if (result.status === "not-food") {
               notFoodLines.add(row.norm);
               setStatus(row.key, { phase: "not-food", runId, message: result.note });
+              announce(`${text}: not logged. ${result.note ?? "Amy does not think this is food."}`);
             } else {
               const { draft } = result;
               addEntryFromDraft(
@@ -413,7 +475,9 @@ export function TodayScreen({
                 text,
                 { appendNoteLine: false }
               );
+              delete errorCountRef.current[row.key];
               setStatus(row.key, null);
+              announce(`${text}: ${draft.macros.calories.toLocaleString()} calories`);
               logged += 1;
             }
           });
@@ -421,18 +485,19 @@ export function TodayScreen({
           if (location.error && logged) showToast({ kind: "info", message: location.error });
         } catch (error) {
           const agentError = error instanceof AgentError ? error : new AgentError("network", error instanceof Error ? error.message : "The estimate failed.");
+          const manualNow = needsSettings(agentError);
           chunk.forEach(({ row, runId }) => {
-            if (lineRunRef.current[row.key] === runId) setStatus(row.key, { phase: "error", runId, message: agentError.message });
+            if (lineRunRef.current[row.key] === runId) failLine(row, runId, agentError.message, manualNow);
           });
           reportAgentError(agentError);
           if (agentError.fatal) {
-            remote.slice(start + MAX_LINES_PER_REQUEST).forEach(({ row, runId }) => setStatus(row.key, { phase: "error", runId, message: agentError.message }));
+            remote.slice(start + MAX_LINES_PER_REQUEST).forEach(({ row, runId }) => failLine(row, runId, agentError.message, manualNow));
             return;
           }
         }
       }
     },
-    [addEntryFromDraft, agentContext, reportAgentError, setStatus, showToast]
+    [addEntryFromDraft, agentContext, failLine, reportAgentError, setStatus, showToast]
   );
 
   const reestimateEntry = useCallback(
@@ -460,9 +525,15 @@ export function TodayScreen({
           context
         );
         if (key) setStatus(key, null);
-        if (!entriesRef.current.some((item) => item.id === entry.id)) return;
+        const latest = entriesRef.current.find((item) => item.id === entry.id);
+        if (!latest) return;
+        // A newer run for this line, or numbers the user confirmed meanwhile, win over this reply.
+        if (key && lineRunRef.current[key] !== runId) return;
+        if (!options.manual && (latest.userEdited || latest.source !== "ai_text")) return;
         if (result?.status === "ok") {
           const { draft } = result;
+          // Only a successful manual re-estimate replaces what was remembered for this line.
+          if (options.manual) forgetFood(text);
           updateEntry(entry.id, {
             title: draft.title.trim() || text,
             servingLabel: draft.servingLabel,
@@ -485,19 +556,20 @@ export function TodayScreen({
         if (options.manual) reportAgentError(agentError);
       }
     },
-    [agentContext, openModal, reportAgentError, setStatus, showToast, updateEntry]
+    [agentContext, forgetFood, openModal, reportAgentError, setStatus, showToast, updateEntry]
   );
 
   // Estimate completed lines that have no entry yet. Everything pending goes out as one batch.
+  // Nothing is estimated while dictation is still producing interim text.
   useEffect(() => {
-    if (!data) return;
+    if (!data || listening) return;
     const timer = setTimeout(() => {
       const rows = buildLineRows(workingTextRef.current, entriesRef.current, statusRef.current, commitLastRef.current);
       const pending = rows.filter((row) => row.completed && !row.entry && !row.status && isLoggableLine(row.text) && !notFoodLines.has(row.norm));
       if (pending.length) void analyzeRows(pending);
     }, ANALYZE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [analyzeRows, commitLast, data, entries, retryTick, selectedDay, workingText]);
+  }, [analyzeRows, commitLast, data, entries, listening, retryTick, selectedDay, workingText]);
 
   // A line edited in place keeps its entry; once typing settles, AI-made entries refresh themselves.
   useEffect(() => {
@@ -613,10 +685,11 @@ export function TodayScreen({
     const nextText = base ? `${base}\n${transcript}` : transcript;
     animateLayout();
     setWorkingText(nextText);
+    // Interim transcripts are not finished lines; only the final one may be logged.
+    setCommitLast(Boolean(event.isFinal));
     if (event.isFinal) {
       // A finished dictation is a finished line: log it without needing the keyboard's Enter.
       persistNote(selectedDay, nextText);
-      setCommitLast(true);
       abortDictation();
     }
   });
@@ -628,7 +701,8 @@ export function TodayScreen({
       if (now - lastDaySwipeAtRef.current < 300) return true;
       lastDaySwipeAtRef.current = now;
       persistNote(selectedDay, workingTextRef.current);
-      skipNextBlurSaveRef.current = true;
+      // Only a real blur consumes this flag; blurring an unfocused input fires no blur event.
+      skipNextBlurSaveRef.current = inputRef.current?.isFocused() === true;
       Keyboard.dismiss();
       inputRef.current?.blur();
       animateLayout();
@@ -717,9 +791,21 @@ export function TodayScreen({
     return () => clearTimeout(timer);
   }, [dictationSignal, toggleDictation]);
 
+  // Undo puts the old text back only if nothing changed since; otherwise the lines are appended to
+  // what is there now, so newer typing survives. Entries from another day go back to that day's note.
+  const undoRemoval = (removed: FoodEntry[], textBefore: string, textAfter: string) => {
+    const { here, elsewhere, next } = undoRemovedLines(selectedDayRef.current, workingTextRef.current, textBefore, textAfter, removed);
+    elsewhere.forEach((entry) => restoreEntry(entry));
+    if (next === null) return;
+    here.forEach((entry) => restoreEntry(entry, next.trimEnd()));
+    externalNoteRef.current = next.trimEnd();
+    animateLayout();
+    setWorkingText(next);
+    setCommitLast(true);
+  };
+
   const handleTextChange = (value: string) => {
     const previous = workingTextRef.current;
-    animateLayout();
 
     // Fixing a typo keeps the logged entry (and any numbers the user corrected) attached to the line.
     const edit = singleLineEdit(previous, value);
@@ -727,9 +813,15 @@ export function TodayScreen({
       const entry = buildLineRows(previous, entriesRef.current, {})[edit.index]?.entry;
       if (entry) {
         const rawInput = edit.after.trim();
-        updateEntry(entry.id, { rawInput });
-        entriesRef.current = entriesRef.current.map((item) => (item.id === entry.id ? { ...item, rawInput } : item));
-        if (!entry.userEdited && entry.source === "ai_text") pendingReestimateRef.current.set(entry.id, Date.now());
+        // Calories typed inline ("latte 190 cal") follow the edit at once; AI numbers refresh once typing settles.
+        const inline = findLocalMatch(rawInput, [], []);
+        const patch: Partial<FoodEntry> =
+          inline?.kind === "inline"
+            ? { rawInput, title: inline.title, macros: inline.macros, source: "manual", sourceLabel: inline.sourceLabel, confidence: 1, portion: undefined, items: undefined }
+            : { rawInput };
+        updateEntry(entry.id, patch);
+        entriesRef.current = entriesRef.current.map((item) => (item.id === entry.id ? { ...item, ...patch } : item));
+        if (!inline && !entry.userEdited && entry.source === "ai_text") pendingReestimateRef.current.set(entry.id, Date.now());
       }
     }
 
@@ -747,11 +839,7 @@ export function TodayScreen({
         kind: "info",
         message: removed.length === 1 ? `Removed ${removed[0]?.title ?? "food"} (${removedCalories.toLocaleString()} cal)` : `Removed ${removed.length} foods (${removedCalories.toLocaleString()} cal)`,
         actionLabel: "Undo",
-        onAction: () => {
-          removed.forEach((entry) => restoreEntry(entry, previous.trimEnd()));
-          externalNoteRef.current = previous.trimEnd();
-          setWorkingText(previous);
-        }
+        onAction: () => undoRemoval(removed, previous, value)
       });
     }
 
@@ -775,6 +863,8 @@ export function TodayScreen({
   };
 
   const saveEntry = (entry: FoodEntry, patch: Partial<FoodEntry>) => {
+    // Numbers saved by hand are not replaced by a re-estimate that was queued by an earlier edit.
+    pendingReestimateRef.current.delete(entry.id);
     const titleChanged = typeof patch.title === "string" && patch.title.trim() && patch.title !== entry.title;
     const rawInput = titleChanged ? (patch.title ?? entry.title) : (entry.rawInput ?? entry.title);
     updateEntry(entry.id, titleChanged ? { ...patch, rawInput } : patch);
@@ -789,17 +879,13 @@ export function TodayScreen({
   const removeEntry = (entry: FoodEntry) => {
     const previousText = workingTextRef.current;
     deleteEntry(entry.id);
-    replaceLineForEntry(entry, null);
+    const afterText = replaceLineForEntry(entry, null);
     setEditingEntryId(null);
     showToast({
       kind: "info",
       message: `Removed ${entry.title}`,
       actionLabel: "Undo",
-      onAction: () => {
-        restoreEntry(entry, previousText.trimEnd());
-        externalNoteRef.current = previousText.trimEnd();
-        setWorkingText(previousText);
-      }
+      onAction: () => undoRemoval([entry], previousText, afterText)
     });
   };
 
@@ -840,11 +926,19 @@ export function TodayScreen({
       {...panResponder.panHandlers}
     >
       <View style={[styles.top, compactChrome && styles.topCompact, { top: floatingHeaderTop }]}>
-        <Image source={require("../../assets/icon-cat-alt.png")} style={[styles.logo, compactChrome && styles.logoCompact]} />
+        <Image source={require("../../assets/logo.png")} style={[styles.logo, compactChrome && styles.logoCompact]} />
         <InteractivePressable
           accessibilityRole="button"
           accessibilityLabel={onToday ? "Today" : `${labelForDay(selectedDay)}. Jump to today`}
-          accessibilityHint={onToday ? "Swipe left or right on the log to change days." : "Returns the log to today's date."}
+          accessibilityHint={onToday ? "Swipe left or right on the log, or use the actions menu, to change days." : "Returns the log to today's date."}
+          accessibilityActions={[
+            { name: "increment", label: "Next day" },
+            { name: "decrement", label: "Previous day" }
+          ]}
+          onAccessibilityAction={(event) => {
+            persistNote(selectedDay, workingTextRef.current);
+            shiftDay(event.nativeEvent.actionName === "increment" ? 1 : -1);
+          }}
           onPress={() => {
             if (onToday) {
               showToast({ kind: "info", message: "Swipe left or right to change days.", durationMs: 1800 });
@@ -882,7 +976,7 @@ export function TodayScreen({
       </View>
 
       {saveError ? (
-        <View accessibilityRole="alert" style={[styles.saveBanner, { top: floatingHeaderTop + FLOATING_HEADER_HEIGHT + 8 }]}>
+        <View accessibilityRole="alert" accessibilityLiveRegion="assertive" style={[styles.saveBanner, { top: floatingHeaderTop + FLOATING_HEADER_HEIGHT + 8 }]}>
           <Text style={styles.saveBannerText}>{saveError}</Text>
         </View>
       ) : null}
@@ -910,14 +1004,14 @@ export function TodayScreen({
               }}
               multiline
               scrollEnabled
-              onScroll={(event) => setNoteScrollY(event.nativeEvent.contentOffset.y)}
-              placeholder={hasKey ? "Start logging your meals...\nOne food per line, then Enter." : "Start logging your meals...\nTry: protein shake 160 cal"}
+              onScroll={(event) => noteScrollY.setValue(event.nativeEvent.contentOffset.y)}
+              placeholder={hasKey ? "Start logging your meals…\nOne food per line, then Enter." : "Start logging your meals…\nTry: protein shake 160 cal"}
               placeholderTextColor={colors.dim}
               accessibilityLabel={`Food log for ${labelForDay(selectedDay)}`}
               style={[styles.noteInput, { paddingTop: contentTopInset, paddingBottom: dockReserve }]}
             />
 
-            <View pointerEvents="none" style={styles.measureLayer}>
+            <View importantForAccessibility="no-hide-descendants" accessibilityElementsHidden style={styles.measureLayer}>
               {lineRows.map((row) => (
                 <Text
                   key={`measure-${row.key}`}
@@ -930,11 +1024,11 @@ export function TodayScreen({
             </View>
           </View>
 
-          <View style={styles.lineRailViewport}>
+          <View style={[styles.lineRailViewport, { width: railWidth }]}>
             <View style={[styles.lineRailClip, { marginTop: contentTopInset, marginBottom: dockReserve }]}>
-              <View style={[styles.lineRail, { transform: [{ translateY: -noteScrollY }] }]}>
+              <Animated.View style={[styles.lineRail, { width: railWidth, transform: [{ translateY: Animated.multiply(noteScrollY, -1) }] }]}>
                 {lineRows.map((row) => {
-                  const rowHeight = lineHeights[row.key] ?? NOTE_LINE_HEIGHT;
+                  const rowHeight = lineHeights[row.key] ?? noteLineHeight;
                   const phase = row.status?.phase;
                   let content: React.ReactNode = null;
 
@@ -951,9 +1045,11 @@ export function TodayScreen({
                         accessibilityHint="Opens the nutrition editor for this log line."
                         feedbackKind="edit"
                         onPress={() => setEditingEntryId(entry.id)}
-                        style={styles.lineCalorieHit}
+                        style={[styles.lineCalorieHit, calorieHitStyle]}
                       >
-                        <Text style={[styles.sideCalories, low && styles.sideCaloriesLow]}>{label}</Text>
+                        <Text numberOfLines={1} maxFontSizeMultiplier={1.3} style={[styles.sideCalories, low && styles.sideCaloriesLow]}>
+                          {label}
+                        </Text>
                       </InteractivePressable>
                     );
                   } else if (phase === "error") {
@@ -962,9 +1058,11 @@ export function TodayScreen({
                         accessibilityRole="button"
                         accessibilityLabel={`Estimate failed for ${row.text.trim()}. Retry`}
                         accessibilityHint={row.status?.message}
+                        accessibilityActions={[{ name: "longpress", label: "Enter calories manually" }]}
+                        onAccessibilityAction={() => setManualLine({ key: row.key, text: row.text })}
                         onPress={() => retryLine(row)}
                         onLongPress={() => setManualLine({ key: row.key, text: row.text })}
-                        style={styles.lineCalorieHit}
+                        style={[styles.lineCalorieHit, calorieHitStyle]}
                       >
                         <View style={[styles.lineChip, styles.lineChipError]}>
                           <Text style={[styles.lineChipText, styles.lineChipErrorText]}>Retry</Text>
@@ -976,18 +1074,42 @@ export function TodayScreen({
                       <InteractivePressable
                         accessibilityRole="button"
                         accessibilityLabel={`Add calories for ${row.text.trim()}`}
-                        accessibilityHint="Opens manual calorie entry for this line."
+                        accessibilityHint={row.status?.message ? `${row.status.message} Opens manual calorie entry for this line.` : "Opens manual calorie entry for this line."}
                         feedbackKind="edit"
                         onPress={() => setManualLine({ key: row.key, text: row.text })}
-                        style={styles.lineCalorieHit}
+                        style={[styles.lineCalorieHit, calorieHitStyle]}
                       >
                         <View style={styles.lineChip}>
                           <Text style={styles.lineChipText}>+ cal</Text>
                         </View>
                       </InteractivePressable>
                     );
+                  } else if (phase === "not-food") {
+                    content = (
+                      <InteractivePressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`${row.text.trim()} was not logged as food. Estimate anyway`}
+                        accessibilityHint={row.status?.message ?? "Amy did not think this line is food."}
+                        accessibilityActions={[{ name: "longpress", label: "Enter calories manually" }]}
+                        onAccessibilityAction={() => setManualLine({ key: row.key, text: row.text })}
+                        onPress={() => {
+                          notFoodLines.delete(row.norm);
+                          retryLine(row);
+                        }}
+                        onLongPress={() => setManualLine({ key: row.key, text: row.text })}
+                        style={[styles.lineCalorieHit, calorieHitStyle]}
+                      >
+                        <View style={[styles.lineChip, styles.lineChipMuted]}>
+                          <Text style={[styles.lineChipText, styles.lineChipMutedText]}>Not food?</Text>
+                        </View>
+                      </InteractivePressable>
+                    );
                   } else if (showEnterHint && row.key === lastRow?.key) {
-                    content = <Text style={styles.enterHint}>↵ to log</Text>;
+                    content = (
+                      <Text maxFontSizeMultiplier={1.3} style={styles.enterHint}>
+                        ↵ to log
+                      </Text>
+                    );
                   }
 
                   return (
@@ -996,7 +1118,7 @@ export function TodayScreen({
                     </View>
                   );
                 })}
-              </View>
+              </Animated.View>
             </View>
           </View>
         </View>
@@ -1007,7 +1129,9 @@ export function TodayScreen({
           <Text style={styles.overlayTitle}>{onToday ? "Today" : labelForDay(selectedDay)}</Text>
           <View style={styles.overlayCalorieRow}>
             <View style={styles.overlayCalorieLabel}>
-              <Text style={styles.overlayCalorieEmoji}>🔥</Text>
+              <Text importantForAccessibility="no" style={styles.overlayCalorieEmoji}>
+                🔥
+              </Text>
               <Text style={styles.overlayCalorieText}>Calories</Text>
             </View>
             <Text style={styles.overlayCalorieValue}>
@@ -1094,7 +1218,6 @@ export function TodayScreen({
         onDelete={removeEntry}
         onReestimate={(entry) => {
           setEditingEntryId(null);
-          forgetFood(entry.rawInput ?? entry.title);
           void reestimateEntry(entry, { manual: true });
         }}
         onSaveAsMeal={saveAsMeal}
@@ -1152,7 +1275,7 @@ const styles = StyleSheet.create({
   todayPill: {
     minWidth: 116,
     maxWidth: 164,
-    height: 48,
+    minHeight: 48,
     paddingHorizontal: 16,
     borderRadius: 999,
     alignItems: "center",
@@ -1163,7 +1286,6 @@ const styles = StyleSheet.create({
   },
   todayPillCompact: {
     minWidth: 104,
-    height: 44,
     paddingHorizontal: 14
   },
   todayText: {
@@ -1176,7 +1298,7 @@ const styles = StyleSheet.create({
     fontSize: 16
   },
   streakPill: {
-    height: 48,
+    minHeight: 48,
     minWidth: 70,
     borderRadius: 999,
     flexDirection: "row",
@@ -1190,13 +1312,12 @@ const styles = StyleSheet.create({
     borderColor: FLOATING_PANEL_LINE
   },
   streakPillCompact: {
-    height: 44,
     minWidth: 62,
     paddingLeft: 14,
     paddingRight: 12
   },
   settingsPill: {
-    height: 48,
+    minHeight: 48,
     width: 48,
     borderRadius: 999,
     alignItems: "center",
@@ -1206,8 +1327,7 @@ const styles = StyleSheet.create({
     borderColor: FLOATING_PANEL_LINE
   },
   settingsPillCompact: {
-    height: 44,
-    width: 44
+    width: 48
   },
   streakText: {
     color: colors.ink,
@@ -1248,7 +1368,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 0,
     left: 0,
-    opacity: 0
+    opacity: 0,
+    pointerEvents: "none"
   },
   measureText: {
     color: colors.ink,
@@ -1277,10 +1398,8 @@ const styles = StyleSheet.create({
   },
   lineCalorieHit: {
     position: "absolute",
-    top: -CALORIE_HIT_OFFSET,
     right: 0,
     minWidth: 86,
-    height: CALORIE_HIT_TARGET,
     alignItems: "flex-end",
     justifyContent: "center"
   },
@@ -1302,7 +1421,7 @@ const styles = StyleSheet.create({
     borderColor: colors.line
   },
   linePhaseText: {
-    color: colors.dim,
+    color: colors.muted,
     fontSize: 12,
     fontWeight: "800"
   },
@@ -1343,12 +1462,12 @@ const styles = StyleSheet.create({
   dockCompact: {
     left: 14,
     right: 14,
-    gap: 6
+    gap: 4
   },
   caloriePill: {
     flex: 1,
     minWidth: 92,
-    height: 52,
+    minHeight: 52,
     borderRadius: 999,
     flexDirection: "row",
     gap: 6,
@@ -1359,8 +1478,7 @@ const styles = StyleSheet.create({
     borderColor: FLOATING_PANEL_LINE
   },
   caloriePillCompact: {
-    minWidth: 84,
-    height: 50
+    minWidth: 84
   },
   caloriePillActive: {
     backgroundColor: FLOATING_PANEL_ACTIVE_BG,
@@ -1439,11 +1557,11 @@ const styles = StyleSheet.create({
     borderColor: FLOATING_PANEL_LINE
   },
   roundButtonCompact: {
-    width: 46,
-    height: 46
+    width: 48,
+    height: 48
   },
   roundButtonOn: {
-    backgroundColor: colors.purple
+    backgroundColor: colors.purpleButton
   },
   todayPillAway: {
     borderColor: colors.purple
@@ -1497,7 +1615,14 @@ const styles = StyleSheet.create({
     borderColor: colors.pink
   },
   lineChipErrorText: {
-    color: colors.pink
+    color: colors.pinkText
+  },
+  lineChipMuted: {
+    backgroundColor: colors.panel2,
+    borderColor: colors.line
+  },
+  lineChipMutedText: {
+    color: colors.muted
   },
   enterHint: {
     color: colors.dim,

@@ -3,7 +3,7 @@ import { File, Paths } from "expo-file-system";
 import { StorageAccessFramework } from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { Copy, Download, FileText, Save, ShieldCheck, Upload } from "lucide-react-native";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Linking, Platform, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 
 import { checkOpenRouterKey } from "../agent/client";
@@ -18,6 +18,7 @@ import { getLocationContext } from "../services/location";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
 import { labelForDay } from "../utils/date";
+import { parseUserNumber } from "../utils/number";
 
 const EXPORT_MIME_TYPE = "application/json";
 const ANDROID_DOWNLOAD_FOLDER = "Download";
@@ -65,7 +66,9 @@ function Row({
 }) {
   return (
     <View style={styles.row}>
-      <Text style={styles.icon}>{icon}</Text>
+      <Text importantForAccessibility="no" style={styles.icon}>
+        {icon}
+      </Text>
       <View style={styles.rowText}>
         <Text style={styles.rowTitle}>{title}</Text>
         {subtitle ? <Text style={styles.rowSub}>{subtitle}</Text> : null}
@@ -84,13 +87,13 @@ function formatWeight(value: number) {
 }
 
 function numberFromInput(value: string, fallback: number) {
-  const numeric = Number(value.replace(",", "."));
-  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
+  const numeric = parseUserNumber(value);
+  return numeric !== undefined && numeric > 0 ? numeric : fallback;
 }
 
 function macroGrams(value: string) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+  const numeric = parseUserNumber(value);
+  return numeric !== undefined && numeric > 0 ? numeric : 0;
 }
 
 function goalStatus(currentWeight: number, goalWeight: number) {
@@ -181,16 +184,20 @@ export function SettingsModal() {
   // Settings is a long sheet, so results are announced as toasts instead of text below the fold.
   const setNotice = (message: string, kind: ToastKind = "success") => showToast({ message, kind });
 
-  // Import (or any outside change) refreshes the form instead of leaving stale numbers behind.
+  // An outside change (import, a weight log) refreshes only the fields it changed, so numbers
+  // still being typed in the other fields survive.
   const goal = data?.goal;
+  const seenGoalRef = useRef(goal);
   useEffect(() => {
-    if (!goal) return;
-    setCalories(String(goal.dailyCalories));
-    setCarbs(String(goal.carbsTarget));
-    setProtein(String(goal.proteinTarget));
-    setFat(String(goal.fatTarget));
-    setCurrentWeight(goal.currentWeightLbs ? String(goal.currentWeightLbs) : "");
-    setGoalWeight(goal.weightGoalLbs ? String(goal.weightGoalLbs) : "");
+    const previous = seenGoalRef.current;
+    seenGoalRef.current = goal;
+    if (!goal || !previous || goal === previous) return;
+    if (goal.dailyCalories !== previous.dailyCalories) setCalories(String(goal.dailyCalories));
+    if (goal.carbsTarget !== previous.carbsTarget) setCarbs(String(goal.carbsTarget));
+    if (goal.proteinTarget !== previous.proteinTarget) setProtein(String(goal.proteinTarget));
+    if (goal.fatTarget !== previous.fatTarget) setFat(String(goal.fatTarget));
+    if (goal.currentWeightLbs !== previous.currentWeightLbs) setCurrentWeight(goal.currentWeightLbs ? String(goal.currentWeightLbs) : "");
+    if (goal.weightGoalLbs !== previous.weightGoalLbs) setGoalWeight(goal.weightGoalLbs ? String(goal.weightGoalLbs) : "");
   }, [goal]);
 
   const pendingCalories = numberFromInput(calories, data?.goal.dailyCalories ?? 2000);
@@ -217,8 +224,12 @@ export function SettingsModal() {
   };
 
   const saveGoals = () => {
+    if (pendingCalories < 800 || pendingCalories > 10000) {
+      setNotice("Enter a daily calorie target between 800 and 10,000.", "error");
+      return;
+    }
     updateGoal({
-      dailyCalories: pendingCalories,
+      dailyCalories: Math.round(pendingCalories),
       carbsTarget: Math.round(macroGrams(carbs)),
       proteinTarget: Math.round(macroGrams(protein)),
       fatTarget: Math.round(macroGrams(fat))
@@ -299,7 +310,19 @@ export function SettingsModal() {
       }
     }
 
-    const file = new File(Paths.document, fileName);
+    // The share copy lives in the cache (not backed up) and earlier copies are removed first, so at
+    // most one export lingers in app storage.
+    Paths.cache
+      .list()
+      .filter((item): item is File => item instanceof File && item.name.startsWith("amy-export-"))
+      .forEach((item) => {
+        try {
+          item.delete();
+        } catch {
+          // Already gone, or still being read by the last share target.
+        }
+      });
+    const file = new File(Paths.cache, fileName);
     file.write(text);
     if (await Sharing.isAvailableAsync()) {
       await Sharing.shareAsync(file.uri, { mimeType: "application/json", dialogTitle: "Download Amy data" });
@@ -371,7 +394,15 @@ export function SettingsModal() {
 
         <View style={styles.fieldGroup}>
           <Text style={styles.fieldLabel}>Daily calories</Text>
-          <TextInput value={calories} onChangeText={setCalories} keyboardType="number-pad" placeholder="Calories" placeholderTextColor={colors.muted} style={styles.input} />
+          <TextInput
+            value={calories}
+            onChangeText={setCalories}
+            keyboardType="number-pad"
+            placeholder="Calories"
+            placeholderTextColor={colors.muted}
+            accessibilityLabel="Daily calories"
+            style={styles.input}
+          />
         </View>
 
         <View style={styles.macroHeaderRow}>
@@ -393,6 +424,7 @@ export function SettingsModal() {
                 keyboardType="number-pad"
                 placeholder="0"
                 placeholderTextColor={colors.muted}
+                accessibilityLabel={`${macro.label} target in grams`}
                 style={styles.macroTargetInput}
               />
             </View>
@@ -400,7 +432,7 @@ export function SettingsModal() {
         </View>
         <Text style={styles.macroCalHint}>≈ {formatNumber(macroCalories)} cal from macros · target {formatNumber(pendingCalories)} cal</Text>
 
-        <InteractivePressable feedbackKind="success" onPress={saveGoals} style={styles.primaryButton}>
+        <InteractivePressable accessibilityRole="button" feedbackKind="success" onPress={saveGoals} style={styles.primaryButton}>
           <Save size={18} color={colors.ink} strokeWidth={3} />
           <Text style={styles.primaryText}>Save goals</Text>
         </InteractivePressable>
@@ -416,16 +448,32 @@ export function SettingsModal() {
         <View style={styles.twoCol}>
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>Current lbs</Text>
-            <TextInput value={currentWeight} onChangeText={setCurrentWeight} keyboardType="decimal-pad" placeholder="e.g. 181.5" placeholderTextColor={colors.muted} style={styles.input} />
+            <TextInput
+              value={currentWeight}
+              onChangeText={setCurrentWeight}
+              keyboardType="decimal-pad"
+              placeholder="e.g. 181.5"
+              placeholderTextColor={colors.muted}
+              accessibilityLabel="Current weight in pounds"
+              style={styles.input}
+            />
           </View>
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>Goal lbs</Text>
-            <TextInput value={goalWeight} onChangeText={setGoalWeight} keyboardType="decimal-pad" placeholder="e.g. 165" placeholderTextColor={colors.muted} style={styles.input} />
+            <TextInput
+              value={goalWeight}
+              onChangeText={setGoalWeight}
+              keyboardType="decimal-pad"
+              placeholder="e.g. 165"
+              placeholderTextColor={colors.muted}
+              accessibilityLabel="Goal weight in pounds"
+              style={styles.input}
+            />
           </View>
         </View>
         <Text style={styles.goalLine}>{pendingStatus.status}</Text>
-        <TextInput value={weightNote} onChangeText={setWeightNote} placeholder="Note, optional" placeholderTextColor={colors.muted} style={styles.input} />
-        <InteractivePressable feedbackKind="success" onPress={saveWeightLog} style={styles.secondaryButton}>
+        <TextInput value={weightNote} onChangeText={setWeightNote} placeholder="Note, optional" placeholderTextColor={colors.muted} accessibilityLabel="Weight note, optional" style={styles.input} />
+        <InteractivePressable accessibilityRole="button" feedbackKind="success" onPress={saveWeightLog} style={styles.secondaryButton}>
           <Text style={styles.secondaryText}>Log weight & update goal</Text>
         </InteractivePressable>
         <View style={styles.weightHistory}>
@@ -452,8 +500,9 @@ export function SettingsModal() {
           secureTextEntry
           autoCapitalize="none"
           autoCorrect={false}
-          placeholder="sk-or-..."
+          placeholder="sk-or-…"
           placeholderTextColor={colors.muted}
+          accessibilityLabel="OpenRouter API key"
           style={styles.input}
         />
         <TextInput
@@ -463,6 +512,7 @@ export function SettingsModal() {
           autoCorrect={false}
           placeholder={integrationConfig.openRouter.defaultModel}
           placeholderTextColor={colors.muted}
+          accessibilityLabel="AI model"
           style={styles.input}
         />
         <Text style={styles.rowSub}>The model is used for text and photos. Pick a vision-capable model if you use photo or label estimates.</Text>
@@ -475,7 +525,11 @@ export function SettingsModal() {
           />
           <IconAction icon={<Save size={18} color={colors.ink} strokeWidth={3} />} label="Save" onPress={saveAiSettings} variant="primary" />
         </View>
-        {keyCheck.message ? <Text style={[styles.rowSub, { color: keyCheck.ok ? colors.green : colors.pink }]}>{keyCheck.message}</Text> : null}
+        {keyCheck.message ? (
+          <Text accessibilityLiveRegion="polite" style={[styles.rowSub, { color: keyCheck.ok ? colors.green : colors.pinkText }]}>
+            {keyCheck.message}
+          </Text>
+        ) : null}
         <InteractivePressable accessibilityRole="link" onPress={() => void Linking.openURL(integrationConfig.openRouter.keysUrl)} style={styles.linkButton}>
           <Text style={styles.linkText}>Get a key at openrouter.ai/keys</Text>
         </InteractivePressable>
@@ -487,7 +541,8 @@ export function SettingsModal() {
               <InteractivePressable
                 key={option.value}
                 accessibilityRole="button"
-                accessibilityLabel={option.hint}
+                accessibilityLabel={option.label}
+                accessibilityHint={option.hint}
                 accessibilityState={{ selected }}
                 onPress={() => updateSettings({ calorieBias: option.value })}
                 style={[styles.segmentItem, styles.segmentItemWide, selected && styles.segmentOn]}
@@ -497,8 +552,14 @@ export function SettingsModal() {
             );
           })}
         </View>
-        <Row icon="⌖" title="Use rough location" subtitle="Sends only your area (city, region, country) with AI estimates, for restaurant and regional accuracy.">
-          <Switch value={data.settings.locationForRestaurants} onValueChange={toggleLocation} trackColor={{ true: colors.green, false: colors.panel3 }} thumbColor={colors.ink} />
+        <Row icon="⌖" title="Use rough location" subtitle="Sends only your area (neighborhood, city, region, country) with AI estimates, never coordinates. Helps with restaurant and regional accuracy.">
+          <Switch
+            accessibilityLabel="Use rough location"
+            value={data.settings.locationForRestaurants}
+            onValueChange={toggleLocation}
+            trackColor={{ true: colors.green, false: colors.track }}
+            thumbColor={colors.ink}
+          />
         </Row>
         <Row icon="🎙" title="Dictation language" subtitle={data.settings.dictationLanguage === "auto" ? `Follows your phone: ${deviceLocale()}` : data.settings.dictationLanguage} />
       </View>
@@ -551,7 +612,7 @@ export function SettingsModal() {
             <Text style={styles.privacy}>
               This backup has {pendingImport.summary.entries.toLocaleString()} foods, {pendingImport.summary.savedMeals} saved meals, and {pendingImport.summary.weightLogs} weight logs
               {pendingImport.summary.dropped ? ` (${pendingImport.summary.dropped} damaged records will be skipped)` : ""}. It replaces your current{" "}
-              {data.entries.length.toLocaleString()} foods. Export first if you want to keep them.
+              {data.entries.length.toLocaleString()} foods, and its settings replace yours (your OpenRouter key on this device stays). Export first if you want to keep them.
             </Text>
             <View style={styles.exportActions}>
               <IconAction icon={<FileText size={18} color={colors.ink} strokeWidth={3} />} label="Cancel" onPress={() => setPendingImport(null)} />
@@ -567,6 +628,7 @@ export function SettingsModal() {
               multiline
               placeholder="Paste Amy JSON export"
               placeholderTextColor={colors.muted}
+              accessibilityLabel="Pasted Amy JSON export"
               style={[styles.input, styles.importBox]}
             />
             <IconAction
@@ -667,6 +729,8 @@ const styles = StyleSheet.create({
     minHeight: 54,
     borderRadius: 17,
     backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.track,
     color: colors.ink,
     fontSize: 17,
     fontWeight: "800",
@@ -677,13 +741,13 @@ const styles = StyleSheet.create({
     gap: 10
   },
   primaryButton: {
-    height: 54,
+    minHeight: 54,
     borderRadius: 999,
     flexDirection: "row",
     gap: 8,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.purple
+    backgroundColor: colors.purpleButton
   },
   primaryText: {
     color: colors.ink,
@@ -730,7 +794,7 @@ const styles = StyleSheet.create({
     borderRadius: 999
   },
   segmentOn: {
-    backgroundColor: colors.purple
+    backgroundColor: colors.purpleButton
   },
   segmentText: {
     color: colors.muted,
@@ -778,7 +842,7 @@ const styles = StyleSheet.create({
     gap: 12
   },
   autoButton: {
-    minHeight: 34,
+    minHeight: 44,
     borderRadius: 999,
     justifyContent: "center",
     paddingHorizontal: 14,
@@ -814,6 +878,8 @@ const styles = StyleSheet.create({
     minHeight: 54,
     borderRadius: 17,
     backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.track,
     color: colors.ink,
     fontSize: 18,
     fontWeight: "900",
@@ -854,7 +920,7 @@ const styles = StyleSheet.create({
     fontWeight: "700"
   },
   secondaryButton: {
-    height: 52,
+    minHeight: 52,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
@@ -950,8 +1016,8 @@ const styles = StyleSheet.create({
     flex: 1
   },
   actionButtonPrimary: {
-    backgroundColor: colors.purple,
-    borderColor: colors.purple
+    backgroundColor: colors.purpleButton,
+    borderColor: colors.purpleButton
   },
   actionButtonText: {
     color: colors.ink,

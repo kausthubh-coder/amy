@@ -3,12 +3,13 @@ import { StyleSheet, Text, View } from "react-native";
 import Svg, { Circle, Line, Polyline } from "react-native-svg";
 
 import { InteractivePressable } from "../components/InteractivePressable";
-import { totalsForDay } from "../domain/nutrition";
+import { addMacros, emptyMacros } from "../domain/nutrition";
 import { currentStreakDays, totalLoggedDays } from "../domain/streaks";
-import { FoodEntry, WeightLog } from "../domain/types";
+import { FoodEntry, MacroTotals, WeightLog } from "../domain/types";
 import { useAppData } from "../store/AppDataContext";
 import { colors } from "../theme";
 import { addDays, dateFromKey, toDateKey, weekRangeLabel } from "../utils/date";
+import { compareIso } from "../utils/number";
 
 const TREND_WIDTH = 280;
 const TREND_HEIGHT = 132;
@@ -30,15 +31,37 @@ export function StatsTabs({
   streakCount: number;
 }) {
   return (
-    <View style={styles.segment}>
-      <InteractivePressable onPress={() => onTabChange("stats")} style={[styles.segmentButton, tab === "stats" && styles.segmentOn]}>
-        <Text style={[styles.segmentText, tab === "stats" && styles.segmentTextOn]}>Stats</Text>
+    <View accessibilityRole="tablist" style={styles.segment}>
+      <InteractivePressable
+        accessibilityRole="tab"
+        accessibilityState={{ selected: tab === "stats" }}
+        onPress={() => onTabChange("stats")}
+        style={[styles.segmentButton, tab === "stats" && styles.segmentOn]}
+      >
+        <Text numberOfLines={1} maxFontSizeMultiplier={1.3} style={[styles.segmentText, tab === "stats" && styles.segmentTextOn]}>
+          Stats
+        </Text>
       </InteractivePressable>
-      <InteractivePressable onPress={() => onTabChange("streaks")} style={[styles.segmentButton, tab === "streaks" && styles.segmentOn]}>
-        <Text style={[styles.segmentText, tab === "streaks" && styles.segmentTextOn]}>Streaks 🔥 {streakCount}</Text>
+      <InteractivePressable
+        accessibilityRole="tab"
+        accessibilityState={{ selected: tab === "streaks" }}
+        accessibilityLabel={`Streaks, ${streakCount} day streak`}
+        onPress={() => onTabChange("streaks")}
+        style={[styles.segmentButton, tab === "streaks" && styles.segmentOn]}
+      >
+        <Text numberOfLines={1} maxFontSizeMultiplier={1.3} style={[styles.segmentText, tab === "streaks" && styles.segmentTextOn]}>
+          Streaks 🔥 {streakCount}
+        </Text>
       </InteractivePressable>
     </View>
   );
+}
+
+/** One pass over the diary: totals per day, so the charts do not rescan every entry per bar. */
+function totalsByDay(entries: FoodEntry[]) {
+  const totals = new Map<string, MacroTotals>();
+  entries.forEach((entry) => totals.set(entry.day, addMacros(totals.get(entry.day) ?? emptyMacros(), entry.macros)));
+  return totals;
 }
 
 function formatWeight(value: number) {
@@ -53,10 +76,6 @@ function formatMetricValue(value: number, unit: string) {
   return `${formatMacro(value)}${unit}`;
 }
 
-function hasLoggedEntriesForDay(entries: FoodEntry[], day: string) {
-  return entries.some((entry) => entry.day === day);
-}
-
 function daysInSelectedMonth(selectedDay: string) {
   const date = dateFromKey(selectedDay);
   return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
@@ -65,7 +84,7 @@ function daysInSelectedMonth(selectedDay: string) {
 function trendSummary(logs: WeightLog[], goal: number) {
   const sorted = logs
     .slice()
-    .sort((a, b) => a.day.localeCompare(b.day) || a.createdAt.localeCompare(b.createdAt))
+    .sort((a, b) => compareIso(a.day, b.day) || compareIso(a.createdAt, b.createdAt))
     .slice(-14);
   const weights = sorted.map((log) => log.weightLbs);
 
@@ -110,16 +129,25 @@ function trendSummary(logs: WeightLog[], goal: number) {
 
 export function StatsModal({ tab }: { tab: StatsTab }) {
   const { data, selectedDay, today } = useAppData();
-  const days = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(selectedDay, index - dateFromKey(selectedDay).getDay())), [selectedDay]);
+  const days = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, index) => {
+        const day = addDays(selectedDay, index - dateFromKey(selectedDay).getDay());
+        return { day, label: dateFromKey(day).toLocaleDateString(undefined, { weekday: "narrow" }) };
+      }),
+    [selectedDay]
+  );
+  const entries = data?.entries;
+  const dayTotals = useMemo(() => totalsByDay(entries ?? []), [entries]);
   if (!data) return null;
 
-  const activeDays = new Set(data.entries.map((entry) => entry.day));
+  const totalsFor = (day: string) => dayTotals.get(day) ?? emptyMacros();
   const streakCount = currentStreakDays(data.entries, today);
   const loggedDaysCount = totalLoggedDays(data.entries);
-  const selectedTotals = totalsForDay(data.entries, selectedDay);
+  const selectedTotals = totalsFor(selectedDay);
   const weekTotals = days.reduce(
-    (sum, day) => {
-      const total = totalsForDay(data.entries, day);
+    (sum, { day }) => {
+      const total = totalsFor(day);
       return {
         calories: sum.calories + total.calories,
         protein: sum.protein + total.protein,
@@ -130,11 +158,11 @@ export function StatsModal({ tab }: { tab: StatsTab }) {
     { calories: 0, protein: 0, carbs: 0, fat: 0 }
   );
   const todayKey = toDateKey(new Date());
-  const averageDays = days.filter((day) => day <= todayKey || hasLoggedEntriesForDay(data.entries, day));
+  const averageDays = days.filter(({ day }) => day <= todayKey || dayTotals.has(day));
   const averageDayCount = Math.max(1, averageDays.length);
   const averageTotals = averageDays.reduce(
-    (sum, day) => {
-      const total = totalsForDay(data.entries, day);
+    (sum, { day }) => {
+      const total = totalsFor(day);
       return {
         calories: sum.calories + total.calories,
         protein: sum.protein + total.protein,
@@ -170,13 +198,13 @@ export function StatsModal({ tab }: { tab: StatsTab }) {
                   </View>
 	              </View>
 	              <View style={styles.chart}>
-	                {days.map((day) => {
-                  const total = totalsForDay(data.entries, day);
+	                {days.map(({ day, label }) => {
+                  const total = totalsFor(day);
                   return (
 	                    <View key={day} style={styles.barSlot}>
 	                      <Bar value={total[metric.field]} target={metric.target} color={metric.color} />
                         <Text style={styles.barValue}>{formatMacro(total[metric.field])}</Text>
-	                      <Text style={styles.dayLabel}>{dateFromKey(day).toLocaleDateString(undefined, { weekday: "narrow" })}</Text>
+	                      <Text style={styles.dayLabel}>{label}</Text>
 	                    </View>
 	                  );
                 })}
@@ -274,9 +302,9 @@ export function StatsModal({ tab }: { tab: StatsTab }) {
               const date = new Date(dateFromKey(selectedDay));
               date.setDate(day);
               const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-              const on = activeDays.has(key);
+              const on = dayTotals.has(key);
               return (
-                <View key={day} style={[styles.calendarDay, on && styles.calendarDayOn]}>
+                <View key={day} accessible accessibilityLabel={on ? `${day}, logged` : `${day}, nothing logged`} style={[styles.calendarDay, on && styles.calendarDayOn]}>
                   <Text style={[styles.calendarText, on && styles.calendarTextOn]}>{day}</Text>
                 </View>
               );
@@ -301,13 +329,13 @@ const styles = StyleSheet.create({
   segmentButton: {
     flex: 1,
     minWidth: 106,
-    height: 46,
+    minHeight: 48,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 999
   },
   segmentOn: {
-    backgroundColor: colors.panel
+    backgroundColor: colors.purpleButton
   },
   segmentText: {
     color: colors.muted,
@@ -422,7 +450,7 @@ const styles = StyleSheet.create({
     color: colors.green
   },
   weightDeltaUp: {
-    color: colors.pink
+    color: colors.pinkText
   },
   trendFrame: {
     minHeight: 166,
@@ -497,7 +525,7 @@ const styles = StyleSheet.create({
     fontWeight: "900"
   },
   summaryHint: {
-    color: colors.dim,
+    color: colors.muted,
     fontSize: 13,
     fontWeight: "800"
   },
@@ -545,7 +573,7 @@ const styles = StyleSheet.create({
   },
   calendarDayOn: {
     backgroundColor: colors.green,
-    borderColor: colors.blue
+    borderColor: colors.green
   },
   calendarText: {
     color: colors.ink,

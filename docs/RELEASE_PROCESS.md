@@ -1,6 +1,6 @@
 # Amy Release Process
 
-Last updated: 2026-09-22
+Last updated: 2026-10-22
 
 This is the repeatable process for producing public Amy Android releases, including the **arm64-v8a** APK that IzzyOnDroid should consume.
 
@@ -10,12 +10,12 @@ Every release should keep these values aligned:
 
 | Surface | File or location | Current value |
 | --- | --- | --- |
-| App version | `package.json` | `1.0.11` |
-| Expo version | `app.json` | `1.0.11` |
-| Android `versionCode` | `app.json` | `12` |
+| App version | `package.json` | `1.0.12` |
+| Expo version | `app.json` | `1.0.12` |
+| Android `versionCode` | `app.json` | `13` |
 | Android package | `app.json` | `com.kaust.amy` |
-| Fastlane changelog | `fastlane/metadata/android/en-US/changelogs/12.txt` | versionCode `12` |
-| Git tag | Git/GitHub | `v1.0.11` |
+| Fastlane changelog | `fastlane/metadata/android/en-US/changelogs/13.txt` | versionCode `13` |
+| Git tag | Git/GitHub | `v1.0.12` |
 | Release channel | GitHub Releases | `https://github.com/kausthubh-coder/amy/releases/latest` |
 | Izzy artifact | GitHub Release asset | `amy-<version>-arm64-v8a-release.apk` |
 
@@ -30,7 +30,7 @@ For a new release:
 7. Commit the source changes.
 8. Tag the release commit as `vX.Y.Z`.
 
-v1.0.9 was published as a **debug-signed** universal APK. **1.0.10** is the first public APK that uses the maintainer release key and the arm64 split. EAS remote versioning assigned build 11 to 1.0.10 and will assign build 12 to 1.0.11; `app.json` keeps 12 for local metadata. Keep the APK's actual `versionName` / `versionCode` aligned with the tagged release and Fastlane changelog.
+v1.0.9 was published as a **debug-signed** universal APK. **1.0.10** is the first public APK that uses the maintainer release key and the arm64 split. EAS remote versioning is the source of truth for `versionCode` (build 11 for 1.0.10, 12 for 1.0.11, 13 for 1.0.12); `app.json` mirrors it for local metadata, and `npx eas-cli build:version:get --platform android` shows the current remote value. Keep the APK's actual `versionName` / `versionCode` aligned with the tagged release and Fastlane changelog.
 
 ## Standard Verification
 

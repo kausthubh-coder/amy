@@ -7,6 +7,8 @@ export type LocationContext = {
 };
 
 const CACHE_MS = 15 * 60 * 1000;
+// A failed fix is remembered briefly too, so a run of lines does not wait out the timeout each time.
+const FAILURE_CACHE_MS = 2 * 60 * 1000;
 const FIX_TIMEOUT_MS = 6000;
 let cached: { at: number; value: LocationContext } | null = null;
 
@@ -15,13 +17,19 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
 }
 
 /**
- * Rough, city-level context for restaurant estimates. Coordinates never leave this function:
- * only the neighborhood/city/region/country label and country code are returned. Results are
- * cached so logging several lines does not wake the GPS for each one.
+ * Rough, city-level context for restaurant estimates. Coordinates never reach OpenRouter: only the
+ * neighborhood/city/region/country label and country code leave this function. Turning the fix into
+ * a place name goes through Android's geocoder, which is Google's on phones with Play services.
+ * Results are cached so logging several lines does not wake the GPS for each one.
  */
 export async function getLocationContext(options: { fresh?: boolean } = {}): Promise<LocationContext> {
-  if (!options.fresh && cached && Date.now() - cached.at < CACHE_MS) return cached.value;
+  if (!options.fresh && cached && Date.now() - cached.at < (cached.value.error ? FAILURE_CACHE_MS : CACHE_MS)) return cached.value;
+  const value = await readLocationContext();
+  cached = { at: Date.now(), value };
+  return value;
+}
 
+async function readLocationContext(): Promise<LocationContext> {
   try {
     const permission = await Location.requestForegroundPermissionsAsync();
     if (!permission.granted) return { error: "Location is off, so estimates skip nearby restaurant context." };
@@ -40,7 +48,6 @@ export async function getLocationContext(options: { fresh?: boolean } = {}): Pro
       countryCode: place?.isoCountryCode ?? undefined
     };
     if (!value.label) return { error: "Amy could not name this area, so the estimate skipped restaurant context." };
-    cached = { at: Date.now(), value };
     return value;
   } catch {
     return { error: "Amy could not read location, so the estimate skipped restaurant context." };

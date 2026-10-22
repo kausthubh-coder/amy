@@ -128,20 +128,21 @@ function AppBody() {
     <View style={styles.shell}>
       <TodayScreen openModal={openModal} focusSignal={focusSignal} dictationSignal={dictationSignal} prefillText={prefillText} />
 
-      <ModalShell visible={activeModal === "saved"} title="Saved Meals" onClose={() => setActiveModal(null)}>
+      <ModalShell visible={activeModal === "saved"} title="Saved Meals" onClose={() => setActiveModal(null)} dismissOnBackdrop>
         <SavedMealsModal onDone={() => setActiveModal(null)} />
       </ModalShell>
       <ModalShell
         visible={activeModal === "stats"}
         headerContent={<StatsTabs tab={statsTab} onTabChange={setStatsTab} streakCount={statsStreakCount} />}
         onClose={() => setActiveModal(null)}
+        dismissOnBackdrop
       >
         <StatsModal tab={statsTab} />
       </ModalShell>
       <ModalShell visible={activeModal === "settings"} title="Settings" onClose={() => setActiveModal(null)}>
         <SettingsModal />
       </ModalShell>
-      <ModalShell visible={activeModal === "capture"} title={captureTitle} titleIcon={captureTitleIcon} onClose={() => setActiveModal(null)}>
+      <ModalShell visible={activeModal === "capture"} title={captureTitle} titleIcon={captureTitleIcon} onClose={() => setActiveModal(null)} dismissOnBackdrop>
         <CaptureModal
           mode={captureMode}
           onDone={() => setActiveModal(null)}
@@ -157,7 +158,7 @@ function AppBody() {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle="light-content" backgroundColor={colors.bg} translucent={false} />
+      <StatusBar barStyle="light-content" />
       <ErrorBoundary>
         <LocalDataProvider>
           <ToastProvider>

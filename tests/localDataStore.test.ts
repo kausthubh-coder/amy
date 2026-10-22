@@ -4,7 +4,7 @@ import { test } from "node:test";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { seedLocalData } from "../src/domain/seed";
-import { loadLocalData, quarantineAndReset } from "../src/storage/localDataStore";
+import { loadLocalData, parseImportText, quarantineAndReset, readRawStorage, saveLocalData, serializeExport } from "../src/storage/localDataStore";
 import { splitIntoShards } from "../src/storage/migrate";
 
 type StorageMethods = Pick<typeof AsyncStorage, "getItem" | "removeItem" | "getAllKeys" | "multiGet" | "multiSet" | "multiRemove" | "setItem">;
@@ -121,5 +121,47 @@ test("an unverified quarantine copy never removes the original diary", async () 
     await assert.rejects(quarantineAndReset(), /could not verify/);
     assert.equal(rows.get("@amy/local-data"), "damaged raw diary");
     assert.deepEqual(removed, []);
+  });
+});
+
+test("the recovery copy of raw storage never contains the OpenRouter key", async () => {
+  await withStorageMock(async (rows) => {
+    const seed = seedLocalData();
+    const { meta } = splitIntoShards({ ...seed, settings: { ...seed.settings, openRouterKey: "sk-or-v1-secret", androidExportDirectoryUri: "content://tree/Download" } });
+    rows.set("@amy/v2/meta", JSON.stringify(meta));
+    // A damaged (truncated) record still gets the key blanked, by text replacement, even when the cut lands inside the key.
+    rows.set("@amy/quarantine/x/@amy/local-data", '{"kind":"amy-local-data","settings":{"openRouterKey":"sk-or-v1-secret"},');
+    rows.set("@amy/quarantine/y/@amy/local-data", `{"kind":"amy-local-data","settings":{"openRouterKey":"sk-or-v1-sec`);
+    const raw = await readRawStorage();
+    assert.equal(raw.includes("sk-or"), false);
+    assert.equal(raw.includes("content://tree/Download"), false);
+    // Everything else survives, so the copy is still a usable backup.
+    assert.match(raw, /@amy\/v2\/meta/);
+    assert.match(raw, /dailyCalories/);
+    assert.match(raw, /@amy\/quarantine\/x/);
+  });
+});
+
+test("an export with no data section is refused instead of becoming an empty diary", () => {
+  assert.throws(() => parseImportText('{"kind":"amy-local-export"}'), /no Amy data section/);
+  assert.throws(() => parseImportText('{"kind":"amy-local-export","data":null}'), /no Amy data section/);
+  assert.throws(() => parseImportText("not json"), /not valid JSON/);
+  const seed = seedLocalData();
+  assert.equal(parseImportText(serializeExport({ ...seed, settings: { ...seed.settings, onboardingDone: true } })).data.settings.onboardingDone, true);
+});
+
+test("a save that follows a failed save reports the outcome of the newest write", async () => {
+  await withStorageMock(async (rows, fail) => {
+    const seed = seedLocalData();
+    const diary = {
+      ...seed,
+      entries: [{ id: "food-9", day: "2026-09-18", rawInput: "toast", title: "Toast", servingLabel: "1 slice", macros: { calories: 80, carbs: 15, protein: 3, fat: 1 }, source: "manual" as const, confidence: 1, createdAt: "2026-09-18T08:00:00Z", updatedAt: "2026-09-18T08:00:00Z" }]
+    };
+    fail.multiSet = true;
+    const first = saveLocalData(diary);
+    fail.multiSet = false;
+    const second = saveLocalData({ ...diary, updatedAt: "2026-09-18T08:00:01Z" });
+    assert.deepEqual(await Promise.all([first, second]), [true, true]);
+    assert.equal(rows.has("@amy/v2/month/2026-09"), true);
   });
 });
