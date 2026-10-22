@@ -26,6 +26,8 @@ type AppDataContextValue = {
   saveError: string | null;
   today: string;
   selectedDay: string;
+  /** Bumped when an import or a reset replaces the whole diary, so editors reload what they show. */
+  generation: number;
   setSelectedDay: (day: string) => void;
   shiftDay: (days: number) => void;
   goToToday: () => void;
@@ -51,7 +53,7 @@ type AppDataContextValue = {
   importText: (text: string) => ImportSummary;
 };
 
-type AppActions = Omit<AppDataContextValue, "data" | "ready" | "loadError" | "saveError" | "today" | "selectedDay">;
+type AppActions = Omit<AppDataContextValue, "data" | "ready" | "loadError" | "saveError" | "today" | "selectedDay" | "generation">;
 
 const AppDataContext = createContext<AppDataContextValue | null>(null);
 
@@ -125,6 +127,7 @@ function summarize(data: AmyLocalData, dropped: number): ImportSummary {
 
 export function LocalDataProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<AmyLocalData | null>(null);
+  const [generation, setGeneration] = useState(0);
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -211,6 +214,7 @@ export function LocalDataProvider({ children }: { children: ReactNode }) {
         const fresh = await quarantineAndReset();
         dataRef.current = fresh;
         setData(fresh);
+        setGeneration((value) => value + 1);
         setLoadError(null);
       },
       updateDayNote: (day, text) =>
@@ -352,17 +356,18 @@ export function LocalDataProvider({ children }: { children: ReactNode }) {
       importText: (text) => {
         const report = parseImportText(text);
         const current = dataRef.current;
-        // Exports never contain the API key or folder grant, so keep the ones on this device.
+        // Exports never carry the API key or folder grant; whatever the file says, this device's stay.
         const imported: AmyLocalData = {
           ...report.data,
           settings: {
             ...report.data.settings,
-            openRouterKey: report.data.settings.openRouterKey || current?.settings.openRouterKey || "",
+            openRouterKey: current?.settings.openRouterKey ?? "",
             androidExportDirectoryUri: current?.settings.androidExportDirectoryUri
           }
         };
         dataRef.current = imported;
         setData(imported);
+        setGeneration((value) => value + 1);
         void saveLocalData(imported);
         return summarize(imported, report.dropped);
       }
@@ -371,8 +376,8 @@ export function LocalDataProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<AppDataContextValue>(
-    () => ({ data, ready, loadError, saveError, today, selectedDay, ...actions }),
-    [actions, data, loadError, ready, saveError, selectedDay, today]
+    () => ({ data, ready, loadError, saveError, today, selectedDay, generation, ...actions }),
+    [actions, data, generation, loadError, ready, saveError, selectedDay, today]
   );
 
   return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;
