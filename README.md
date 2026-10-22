@@ -151,9 +151,10 @@ Amy is built around local-first logging:
 - Diary entries, saved meals, goals, weight logs, corrections, exports, and imports live in local app storage.
 - OpenRouter is optional and only used when you add your own key in Settings.
 - Open Food Facts is used for packaged-food barcode lookup.
-- Optional rough location context (neighborhood, city, region, country; never coordinates) can help restaurant estimates and can be turned off. Amy only requests coarse location permission.
-- Dictation may use the Google speech service on the device.
+- Optional rough location context (neighborhood, city, region, country; never coordinates to OpenRouter) can help restaurant estimates and can be turned off. The place name comes from Android's geocoder, which is Google's on most phones. Amy only requests coarse location permission.
+- Dictation uses the phone's speech service, Google's on most Android phones, which may send the audio to Google to transcribe it.
 - JSON exports intentionally remove the saved OpenRouter key.
+- If Android backup is on for your Google account, the device backup may include Amy's data, including the OpenRouter key.
 
 Read [PRIVACY.md](PRIVACY.md) for the full data, permission, and network-service disclosure.
 
