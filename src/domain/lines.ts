@@ -1,3 +1,4 @@
+import { compareIso, parseUserNumber } from "../utils/number";
 import { FoodEntry } from "./types";
 
 export type LineRow<Status> = {
@@ -23,7 +24,7 @@ export function splitLogLines(text: string) {
 }
 
 export function entryLineNorm(entry: FoodEntry) {
-  return normalizeMealLine(entry.rawInput ?? entry.title);
+  return normalizeMealLine(entry.rawInput?.trim() || entry.title);
 }
 
 // A line is worth estimating once it has at least two characters and a letter ("egg", "tea", "pho").
@@ -46,7 +47,7 @@ export function buildLineRows<Status>(
   const buckets = new Map<string, FoodEntry[]>();
   entries
     .slice()
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .sort((a, b) => compareIso(a.createdAt, b.createdAt))
     .forEach((entry) => {
       const key = entryLineNorm(entry);
       if (!key) return;
@@ -88,7 +89,7 @@ export function entriesWithoutLines(nextText: string, entries: FoodEntry[]): Foo
   const orphaned: FoodEntry[] = [];
   entries
     .slice()
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .sort((a, b) => compareIso(a.createdAt, b.createdAt))
     .forEach((entry) => {
       const norm = entryLineNorm(entry);
       if (!norm) return;
@@ -99,9 +100,38 @@ export function entriesWithoutLines(nextText: string, entries: FoodEntry[]): Foo
   return orphaned;
 }
 
+/** Levenshtein distance, stopped early once it exceeds `limit`. */
+function editDistance(a: string, b: string, limit: number) {
+  if (Math.abs(a.length - b.length) > limit) return limit + 1;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      const value = Math.min((previous[j] ?? 0) + 1, (current[j - 1] ?? 0) + 1, (previous[j - 1] ?? 0) + cost);
+      current.push(value);
+      rowMin = Math.min(rowMin, value);
+    }
+    if (rowMin > limit) return limit + 1;
+    previous = current;
+  }
+  return previous[b.length] ?? limit + 1;
+}
+
+/** A typo fix or a small tweak ("chiken salad" to "chicken salad", "2 eggs" to "3 eggs"), not a different food. */
+export function isSmallLineEdit(before: string, after: string) {
+  const a = normalizeMealLine(before);
+  const b = normalizeMealLine(after);
+  if (a === b) return true;
+  const limit = Math.max(2, Math.floor(Math.max(a.length, b.length) / 2));
+  return editDistance(a, b, limit) <= limit;
+}
+
 /**
  * Detects an in-place edit of exactly one line (same line count, one line changed to a non-empty
- * value). Those edits keep the logged entry attached instead of deleting it.
+ * value that still reads as the same food). Those edits keep the logged entry attached instead of
+ * deleting it; rewriting a line into a different food counts as a delete plus a new line.
  */
 export function singleLineEdit(previousText: string, nextText: string): { index: number; before: string; after: string } | null {
   const before = splitLogLines(previousText);
@@ -117,6 +147,7 @@ export function singleLineEdit(previousText: string, nextText: string): { index:
   const beforeLine = before[changed] ?? "";
   const afterLine = after[changed] ?? "";
   if (!normalizeMealLine(beforeLine) || !normalizeMealLine(afterLine)) return null;
+  if (!isSmallLineEdit(beforeLine, afterLine)) return null;
   return { index: changed, before: beforeLine, after: afterLine };
 }
 
@@ -125,8 +156,10 @@ export function parseInlineCalories(line: string): { title: string; calories: nu
   const match = line.trim().match(/^(.*?[A-Za-zÀ-￿].*?)[\s,:\-–—=]+(\d{1,4}(?:[.,]\d+)?)\s*(?:k?cals?|calories)\.?$/i);
   if (!match) return null;
   const title = (match[1] ?? "").trim();
-  const calories = Math.round(Number((match[2] ?? "").replace(",", ".")));
-  if (!title || !Number.isFinite(calories) || calories < 0 || calories > 9999) return null;
+  const parsed = parseUserNumber(match[2] ?? "");
+  if (parsed === undefined) return null;
+  const calories = Math.round(parsed);
+  if (!title || calories < 0 || calories > 9999) return null;
   return { title, calories };
 }
 
