@@ -73,15 +73,22 @@ export function scaleMacroTotals(macros: MacroTotals, factor: number): MacroTota
   };
 }
 
+const NOT_JSON = "The AI model replied with text instead of nutrition data.";
+
+function asPayload(value: unknown): AgentPayload {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(NOT_JSON);
+  return value as AgentPayload;
+}
+
 export function parseModelJson(content: string): AgentPayload {
   const trimmed = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "").trim();
   try {
-    return JSON.parse(trimmed) as AgentPayload;
+    return asPayload(JSON.parse(trimmed));
   } catch {
     const start = trimmed.indexOf("{");
     const end = trimmed.lastIndexOf("}");
-    if (start === -1 || end <= start) throw new Error("The AI model replied with text instead of nutrition data.");
-    return JSON.parse(trimmed.slice(start, end + 1)) as AgentPayload;
+    if (start === -1 || end <= start) throw new Error(NOT_JSON);
+    return asPayload(JSON.parse(trimmed.slice(start, end + 1)));
   }
 }
 
