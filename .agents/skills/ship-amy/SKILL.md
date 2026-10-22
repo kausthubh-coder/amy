@@ -35,6 +35,8 @@ gh pr checks <n> --watch
 gh pr merge <n> --merge
 ```
 
+Right after a push, `gh pr checks --watch` can return the previous head's run and exit at once. Confirm with `gh run list --commit <head sha>` that a run for the new head completed with `success` before merging.
+
 If the branch already has an open PR, skip `gh pr create` and use that number. Use a merge commit; every release so far points at one. Never `--delete-branch` from inside a worktree, and never `--admin` past a red check. Done when `gh pr view <n> --json state,mergeCommit` shows `MERGED` and a merge SHA. That SHA is the release commit.
 
 ## 3. Build
@@ -61,7 +63,7 @@ URL=$(node -e 'console.log(require("./.artifacts/release/build.json").artifacts.
 APK=.artifacts/release/amy-<version>-arm64-v8a-release.apk
 curl -sSL "$URL" -o "$APK"
 BT="$ANDROID_HOME/build-tools/36.0.0"
-"$BT/aapt2" dump badging "$APK" | grep -E "^package|sdkVersion|targetSdkVersion|native-code|application-debuggable"
+"$BT/aapt2" dump badging "$APK" | grep -iE "^package|sdkversion|native-code|application-debuggable"
 "$BT/apksigner.bat" verify --print-certs "$APK" | grep -i sha-256   # apksigner without .bat on macOS and Linux
 sha256sum "$APK"; stat -c %s "$APK"
 ```
@@ -76,7 +78,7 @@ git push origin v<version>
 gh release create v<version> "$APK" --title "Amy <version>" --notes-file .artifacts/release/notes.md
 ```
 
-Write the notes with `unslop`, in the shape of the previous releases (`gh release view v1.0.11`): a sentence on what the release is for, a short list of what a person will notice, then the artifact block (filename, package, version and build, ABI, minimum and target API, size in bytes, SHA-256, signing certificate SHA-256 with "same as" the previous release, the EAS build URL and the merge commit), then known issues and what had no device pass. Done when `gh release view v<version> --json assets,isLatest` lists the APK and `isLatest` is true.
+Write the notes with `unslop`, in the shape of the previous releases (`gh release view v1.0.11`): a sentence on what the release is for, a short list of what a person will notice, then the artifact block (filename, package, version and build, ABI, minimum and target API, size in bytes, SHA-256, signing certificate SHA-256 with "same as" the previous release, the EAS build URL and the merge commit), then known issues and what had no device pass. Done when `gh release view v<version> --json assets,isDraft` lists the APK with `isDraft` false and `gh api repos/kausthubh-coder/amy/releases/latest -q .tag_name` prints the new tag.
 
 ## 6. Production check
 
